@@ -10,10 +10,16 @@
 #ifndef FOR_NAME
     #define FOR_NAME(a) a##_
 #endif 
+
 namespace MainConstants
 {
 	bool printWarnings = false;    
 	bool printMessages = false;
+
+    const static enum AdditionalDefinitions = 
+    {
+        GeostaticStressDefiniton = 0x01 << 0;
+    }
 }
 
 extern "C" 
@@ -79,65 +85,47 @@ extern "C" void FOR_NAME(uel)(
         const int &nIntegerProperties, 
         const double &period)
 {    
-        // get umatPointer and number of stateVars for umat
-        //
-        if ( nIntegerProperties < 5 )
-            throw std::invalid_argument("insufficient integer properties defined for UEL");
+        if ( nIntegerProperties != 5 )
+            throw std::invalid_argument(
+            static_cast<std::ostringstream&>(std::ostringstream() << "Uel with code "<<elementCode << ": insufficient integer properties(" 
+                << nIntegerProperties <<") provided, but 5 are required").str());
 
-        userLibrary::ElementCode elementCode = static_cast<userLibrary::ElementCode> ( elementType );
-        userLibrary::MaterialCode materialID =  static_cast<userLibrary::MaterialCode>( integerProperties[0] );
-        const int nStateVarsUmat =          integerProperties[1];
-        const int nPropertiesUmat =         integerProperties[2];
-        const int nPropertiesElement =      integerProperties[3];
-
-        // get additional definitions: [active Geostatic stress], 
-        const bool activeGeostatic = nIntegerProperties > 5 && integerProperties[4] > 0; 
-        
-        //int sumProps = 0;
-        //for (int i = 3; i< nIntegerProperties; i++)
-            //sumProps += integerProperties[i];
-        //sumProps = activeGeostatic ? sumProps+5 : sumProps;
-
-        //if( sumProps < nProperties){
-            //std::cout << "insufficient properties defined" << sumProps  << " / " << nProperties << std::endl;
-            //throw std::invalid_argument("insufficient properties defined");}
+        userLibrary::ElementCode elementCode =  static_cast<userLibrary::ElementCode> ( integerProperties[0]);
+        userLibrary::MaterialCode materialID =  static_cast<userLibrary::MaterialCode>( integerProperties[1] );
+        const int nPropertiesElement =          integerProperties[2];
+        const int nPropertiesUmat =             integerProperties[3];
+        const int additionalDefinitions =       integerProperties[4];
 
         const double* propertiesUmat =    &properties[0];
         const double* propertiesElement = &properties[nPropertiesUmat];
 
-        BftUel* myUel;
-        try{ myUel = userLibrary::UelFactory(   elementCode, 
-                                                coordinates,
-                                                stateVars,
-                                                nStateVars,
-                                                propertiesElement,
-                                                nPropertiesElement, 
-                                                elementNumber,
-                                                materialID,
-                                                nStateVarsUmat,
-                                                propertiesUmat, 
-                                                nPropertiesUmat); }
-        catch (std::invalid_argument& exc) {
-            std::cout << exc.what() << std::endl;
-            throw;}
+        BftUel* myUel = userLibrary::UelFactory(elementCode, propertiesElement, nPropertiesElement, elementNumber, materialID, propertiesUmat, nPropertiesUmat); }
 
-        // apply geostatic stress by setting values to statevars corresponding to stress 
-        switch(lFlags[0]) {
-            case Abaqus::UelFlags1::GeostaticStress: {
-                myUel->setInitialConditions(BftUel::GeostaticStress, &properties[nPropertiesUmat+nPropertiesElement] ); 
-                break;}
-            default: break;}       
+        const int nNecessaryStateVars = myUel->getNumberOfRequiredStateVars();
+
+        if ( nNecessaryStateVars < nStateVars )
+            throw std::invalid_argument( static_cast<std::ostringstream&>(std::ostringstream() << "Uel with code "
+                        << elementCode << "and material " << materialID << ": insufficient stateVars (" 
+                        << nStateVars <<") provided, but "<< nNecessaryStateVars <<" are required").str());
+
+        myUel->assignStateVars(stateVars, nStateVars);
+
+        myUel->initializeYourself(coordinates);
+
+        double* additionalDefinitionProperties = &propertiesElement[nPropertiesElement];
+        if(additionalDefinitions & AdditionalDefinitions::GeostaticStressDefiniton) {
+            if(lFlags[0] == Abaqus::UelFlags1::GeostaticStress)
+                myUel->setInitialConditions(BftUel::GeostaticStress, geostaticProperties ); 
+            additionalDefinitionProperties += 5; } 
 
         // compute K and P 
         myUel->computeYourself(U , dU, rightHandSide, KMatrix, time, dTime, pNewDT); 
-         if (pNewDT < 0.25)
-             pNewDT = 0.25;
 
         // recompute distributed loads in nodal forces and add it to P 
-        for (int i =0; i<mDload; i++){
-            if (distributedLoadMags[i]<1.e-16)
-                continue;
-            myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
+        //for (int i =0; i<mDload; i++){
+            //if (distributedLoadMags[i]<1.e-16)
+                //continue;
+            //myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
 
         delete myUel;
 }
@@ -190,22 +178,21 @@ extern "C" void FOR_NAME(umat)(
         userLibrary::MaterialCode materialCode = static_cast<userLibrary::MaterialCode> ( stateVars[nStateVars-1] );
         if ( materialCode <= 0 ){
             const std::string materialName(matName);
-            try{
-                materialCode = userLibrary::getMaterialCodeFromName ( materialName.substr(0, materialName.find_first_of(' ')). substr(0, materialName.find_first_of('-'))  ); }
-            catch ( std::invalid_argument& exc) {
-                std::cout << exc.what() << std::endl;
-                throw; }
-            stateVars[nStateVars-1] = static_cast<double> (materialCode);}
+            const std::string strippedName = materialName.substr(0, materialName.find_first_of(' ')). substr(0, materialName.find_first_of('-'));
 
-        BftMaterialHypoElastic* material;
-       
-        try{
-            material = dynamic_cast<BftMaterialHypoElastic*> (bftMaterialFactory( 
-                                        materialCode, stateVars, nStateVars-1, 
-                                        materialProperties, nMaterialProperties, noEl, nPt)); }
-        catch(std::invalid_argument& exc) {
-            std::cout << exc.what() << std::endl; 
-            throw;}
+            materialCode = userLibrary::getMaterialCodeFromName ( strippedName ); }
+
+            stateVars[nStateVars-1] = static_cast<double> (materialCode);
+        }
+
+        BftMaterialHypoElastic* material = dynamic_cast<BftMaterialHypoElastic*> (bftMaterialFactory( materialCode, materialProperties, nMaterialProperties, noEl, nPt)); }
+
+        const int nStateVarsForUmat = nStateVars - 1;
+        if ( material->getNumberOfRequiredStateVars () < nStateVarsForUmat )  
+            throw std::invalid_argument( static_cast<std::ostringstream&>(std::ostringstream() << "Material " << std::string(matName) < ": insufficient stateVars (" 
+                << nStateVars <<" - 1) provided, but "<< material->getNumberOfRequiredStateVars()<<" are required").str());
+
+        material->assignStateVars(stateVars, nStateVarsForUmat);
 
         material->setCharacteristicElementLength(charElemLength);
         
@@ -217,10 +204,8 @@ extern "C" void FOR_NAME(umat)(
         else if(nDirect == 2)
             material->computePlaneStress(stress6, dStressDDStrain66, strain6, dStrain6, time, dtime, pNewDT);
 
-        if(pNewDT < 0.25){
-            pNewDT = 0.25;
-            return;}
-
         userLibrary::backToAbaqus(stress, stress6, dStressDDStrain, dStressDDStrain66, nDirect, nShear);
+
+        delete material;
 }
 
