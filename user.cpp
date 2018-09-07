@@ -2,6 +2,7 @@
 #include "userLibrary.h"
 #include <iostream>
 #include <string>
+#include <sstream>
 #include "bftUel.h"
 #include "bftMaterialHypoElastic.h"
 
@@ -16,11 +17,20 @@ namespace MainConstants
 	bool printWarnings = false;    
 	bool printMessages = false;
 
-    const static enum AdditionalDefinitions = 
-    {
-        GeostaticStressDefiniton = 0x01 << 0;
-    }
+    enum AdditionalDefinitions {
+        GeostaticStressDefiniton = 0x01 << 0,
+    };
 }
+
+class MakeString
+{
+    public:
+        std::stringstream stream;
+        operator std::string() const { return stream.str(); }
+
+        template<class T>
+        MakeString& operator<<(T const& VAR) { stream << VAR; return *this; }
+};
 
 extern "C" 
 {
@@ -86,9 +96,7 @@ extern "C" void FOR_NAME(uel)(
         const double &period)
 {    
         if ( nIntegerProperties != 5 )
-            throw std::invalid_argument(
-            static_cast<std::ostringstream&>(std::ostringstream() << "Uel with code "<<elementCode << ": insufficient integer properties(" 
-                << nIntegerProperties <<") provided, but 5 are required").str());
+            throw std::invalid_argument( MakeString() << "Uel : insufficient integer properties(" << nIntegerProperties <<") provided, but 5 are required");
 
         userLibrary::ElementCode elementCode =  static_cast<userLibrary::ElementCode> ( integerProperties[0]);
         userLibrary::MaterialCode materialID =  static_cast<userLibrary::MaterialCode>( integerProperties[1] );
@@ -99,24 +107,26 @@ extern "C" void FOR_NAME(uel)(
         const double* propertiesUmat =    &properties[0];
         const double* propertiesElement = &properties[nPropertiesUmat];
 
-        BftUel* myUel = userLibrary::UelFactory(elementCode, propertiesElement, nPropertiesElement, elementNumber, materialID, propertiesUmat, nPropertiesUmat); }
+        BftUel* myUel = userLibrary::UelFactory(elementCode, propertiesElement, nPropertiesElement, elementNumber, materialID, propertiesUmat, nPropertiesUmat); 
 
         const int nNecessaryStateVars = myUel->getNumberOfRequiredStateVars();
 
-        if ( nNecessaryStateVars < nStateVars )
-            throw std::invalid_argument( static_cast<std::ostringstream&>(std::ostringstream() << "Uel with code "
-                        << elementCode << "and material " << materialID << ": insufficient stateVars (" 
-                        << nStateVars <<") provided, but "<< nNecessaryStateVars <<" are required").str());
+        if ( nNecessaryStateVars > nStateVars )
+            throw std::invalid_argument( MakeString() << "Uel with code "
+                        << elementCode << " and material " << materialID << ": insufficient stateVars (" 
+                        << nStateVars <<") provided, but "<< nNecessaryStateVars <<" are required");
 
         myUel->assignStateVars(stateVars, nStateVars);
 
         myUel->initializeYourself(coordinates);
 
-        double* additionalDefinitionProperties = &propertiesElement[nPropertiesElement];
-        if(additionalDefinitions & AdditionalDefinitions::GeostaticStressDefiniton) {
-            if(lFlags[0] == Abaqus::UelFlags1::GeostaticStress)
-                myUel->setInitialConditions(BftUel::GeostaticStress, geostaticProperties ); 
-            additionalDefinitionProperties += 5; } 
+        
+        if(additionalDefinitions & MainConstants::AdditionalDefinitions::GeostaticStressDefiniton) {
+            if(lFlags[0] == Abaqus::UelFlags1::GeostaticStress){
+                const double* geostaticProperties = &propertiesElement[nPropertiesElement];
+                myUel->setInitialConditions(BftUel::GeostaticStress, geostaticProperties ); }
+            //additionalDefinitionProperties += 5;  
+        }
 
         // compute K and P 
         myUel->computeYourself(U , dU, rightHandSide, KMatrix, time, dTime, pNewDT); 
@@ -180,18 +190,20 @@ extern "C" void FOR_NAME(umat)(
             const std::string materialName(matName);
             const std::string strippedName = materialName.substr(0, materialName.find_first_of(' ')). substr(0, materialName.find_first_of('-'));
 
-            materialCode = userLibrary::getMaterialCodeFromName ( strippedName ); }
+            materialCode = userLibrary::getMaterialCodeFromName ( strippedName ); 
 
             stateVars[nStateVars-1] = static_cast<double> (materialCode);
+
         }
 
-        BftMaterialHypoElastic* material = dynamic_cast<BftMaterialHypoElastic*> (bftMaterialFactory( materialCode, materialProperties, nMaterialProperties, noEl, nPt)); }
+        BftMaterialHypoElastic* material = dynamic_cast<BftMaterialHypoElastic*> (bftMaterialFactory( materialCode, materialProperties, nMaterialProperties, noEl, nPt)); 
 
         const int nStateVarsForUmat = nStateVars - 1;
-        if ( material->getNumberOfRequiredStateVars () < nStateVarsForUmat )  
-            throw std::invalid_argument( static_cast<std::ostringstream&>(std::ostringstream() << "Material " << std::string(matName) < ": insufficient stateVars (" 
-                << nStateVars <<" - 1) provided, but "<< material->getNumberOfRequiredStateVars()<<" are required").str());
 
+        if ( material->getNumberOfRequiredStateVars () > nStateVarsForUmat )  {
+            const std::string materialName(matName);
+            throw std::invalid_argument( MakeString() << "Material " << materialName.substr(0, materialName.find_first_of(' ')) << ": insufficient stateVars (" << nStateVars << " - 1) provided, but " << material->getNumberOfRequiredStateVars()<<" are required");
+        }
         material->assignStateVars(stateVars, nStateVarsForUmat);
 
         material->setCharacteristicElementLength(charElemLength);
