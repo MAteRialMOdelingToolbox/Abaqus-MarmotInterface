@@ -8,9 +8,6 @@
 
 //These functions are provided to the 'sub' UMATs for easy printing Messages and Warnings. 
 //
-#ifndef FOR_NAME
-    #define FOR_NAME(a) a##_
-#endif 
 
 namespace MainConstants
 {
@@ -34,8 +31,8 @@ class MakeString
 
 extern "C" 
 {
-        void FOR_NAME(stdb_abqerr)(const int *lop, const char* stringZT, const int *intArray, const double *realArray, const char *appendix, const int lengthString, const int lengthAppendix);
-        void FOR_NAME(xit)();
+        void stdb_abqerr_(const int *lop, const char* stringZT, const int *intArray, const double *realArray, const char *appendix, const int lengthString, const int lengthAppendix);
+        void xit_();
 }
 
 extern "C" bool warningToMSG(const std::string& message)
@@ -43,7 +40,7 @@ extern "C" bool warningToMSG(const std::string& message)
     // return always false(!)
     const int lop = -1;
     if(MainConstants::printWarnings)
-            FOR_NAME(stdb_abqerr)(&lop, message.c_str(), nullptr , nullptr , nullptr, message.length(), 0);
+            stdb_abqerr_(&lop, message.c_str(), nullptr , nullptr , nullptr, message.length(), 0);
     return false;
 }
 
@@ -52,12 +49,12 @@ extern "C" bool notificationToMSG(const std::string& message)
     // return always true(!)
     const int lop = 1;
     if(MainConstants::printMessages)
-			FOR_NAME(stdb_abqerr)(&lop, message.c_str(), nullptr , nullptr , nullptr, message.length(), 0);
+			stdb_abqerr_(&lop, message.c_str(), nullptr , nullptr , nullptr, message.length(), 0);
     return true;
 }
 
 
-extern "C" void FOR_NAME(uel)(
+extern "C" void uel_(
         double rightHandSide[/*lVarx , nRightHandSide*/],           // right hand side load vector(s) 1: common, 2: additional for RIKS (see documentation)
         double KMatrix[/*nDof * nDof*/],                            // stiffness matrix 
         double stateVars[],                                         // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
@@ -96,7 +93,7 @@ extern "C" void FOR_NAME(uel)(
         const double &period)
 {    
         if ( nIntegerProperties != 5 )
-            throw std::invalid_argument( MakeString() << "Uel : insufficient integer properties(" << nIntegerProperties <<") provided, but 5 are required");
+            throw std::invalid_argument( MakeString() << "Uel: insufficient integer properties (" << nIntegerProperties <<") provided, but 5 are required");
 
         userLibrary::ElementCode elementCode =  static_cast<userLibrary::ElementCode> ( integerProperties[0]);
         userLibrary::MaterialCode materialID =  static_cast<userLibrary::MaterialCode>( integerProperties[1] );
@@ -112,35 +109,33 @@ extern "C" void FOR_NAME(uel)(
         const int nNecessaryStateVars = myUel->getNumberOfRequiredStateVars();
 
         if ( nNecessaryStateVars > nStateVars )
-            throw std::invalid_argument( MakeString() << "Uel with code "
-                        << elementCode << " and material " << materialID << ": insufficient stateVars (" 
-                        << nStateVars <<") provided, but "<< nNecessaryStateVars <<" are required");
+            throw std::invalid_argument( MakeString() << "Uel with code " << elementCode << " and material " << materialID << ": insufficient stateVars (" << nStateVars <<") provided, but "<< nNecessaryStateVars <<" are required");
 
         myUel->assignStateVars(stateVars, nStateVars);
 
         myUel->initializeYourself(coordinates);
 
-        
-        if(additionalDefinitions & MainConstants::AdditionalDefinitions::GeostaticStressDefiniton) {
+        int additionalDefinitionProperties = 0;
+        if( additionalDefinitions & MainConstants::AdditionalDefinitions::GeostaticStressDefiniton ) {
             if(lFlags[0] == Abaqus::UelFlags1::GeostaticStress){
-                const double* geostaticProperties = &propertiesElement[nPropertiesElement];
-                myUel->setInitialConditions(BftUel::GeostaticStress, geostaticProperties ); }
-            //additionalDefinitionProperties += 5;  
+                const double* geostaticProperties = &propertiesElement[ nPropertiesElement + additionalDefinitionProperties ];
+                myUel->setInitialConditions( BftUel::GeostaticStress, geostaticProperties ); }
+            additionalDefinitionProperties += 5;  
         }
 
         // compute K and P 
         myUel->computeYourself(U , dU, rightHandSide, KMatrix, time, dTime, pNewDT); 
 
-        // recompute distributed loads in nodal forces and add it to P 
-        //for (int i =0; i<mDload; i++){
-            //if (distributedLoadMags[i]<1.e-16)
-                //continue;
-            //myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
+        // compute distributed loads in nodal forces and add it to P 
+        for (int i =0; i<mDload; i++){
+            if (distributedLoadMags[i]<1.e-16)
+                continue;
+            myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
 
         delete myUel;
 }
 
-extern "C" void FOR_NAME(umat)(
+extern "C" void umat_(
         /*to be def.*/  double stress[],                // stress vector in order: S11, S22, (S33), S12, (S13), (S23) 
         /*to be def.*/  double stateVars[],        // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
         /*to be def.*/  double dStressDDStrain[],  // material Jacobian matrix ddSigma/ddEpsilon
