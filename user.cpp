@@ -4,6 +4,7 @@
 #include <string>
 #include <sstream>
 #include "bftUel.h"
+#include "bftUelProperty.h"
 #include "bftMaterialHypoElastic.h"
 
 //These functions are provided to the 'sub' UMATs for easy printing Messages and Warnings. 
@@ -104,7 +105,11 @@ extern "C" void uel_(
         const double* propertiesUmat =    &properties[0];
         const double* propertiesElement = &properties[nPropertiesUmat];
 
-        BftUel* myUel = userLibrary::UelFactory(elementCode, propertiesElement, nPropertiesElement, elementNumber, materialID, propertiesUmat, nPropertiesUmat); 
+        BftUel* myUel = userLibrary::UelFactory(elementCode,  elementNumber);
+
+        myUel->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+
+        myUel->assignProperty( BftMaterialSection( materialID, propertiesUmat, nPropertiesUmat) );
 
         const int nNecessaryStateVars = myUel->getNumberOfRequiredStateVars();
 
@@ -127,10 +132,10 @@ extern "C" void uel_(
         myUel->computeYourself(U , dU, rightHandSide, KMatrix, time, dTime, pNewDT); 
 
         // compute distributed loads in nodal forces and add it to P 
-        for (int i =0; i<mDload; i++){
-            if (distributedLoadMags[i]<1.e-16)
-                continue;
-            myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
+        //for (int i =0; i<mDload; i++){
+            //if (distributedLoadMags[i]<1.e-16)
+                //continue;
+            //myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
 
         delete myUel;
 }
