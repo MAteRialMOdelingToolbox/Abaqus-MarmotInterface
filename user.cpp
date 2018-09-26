@@ -127,10 +127,10 @@ extern "C" void uel_(
         myUel->computeYourself(U , dU, rightHandSide, KMatrix, time, dTime, pNewDT); 
 
         // compute distributed loads in nodal forces and add it to P 
-        for (int i =0; i<mDload; i++){
-            if (distributedLoadMags[i]<1.e-16)
-                continue;
-            myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
+        //for (int i =0; i<mDload; i++){
+            //if (distributedLoadMags[i]<1.e-16)
+                //continue;
+            //myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
 
         delete myUel;
 }
