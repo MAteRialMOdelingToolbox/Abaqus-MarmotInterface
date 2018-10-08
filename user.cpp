@@ -4,6 +4,7 @@
 #include <string>
 #include <sstream>
 #include "bftUel.h"
+#include "bftUelProperty.h"
 #include "bftMaterialHypoElastic.h"
 
 //These functions are provided to the 'sub' UMATs for easy printing Messages and Warnings. 
@@ -104,7 +105,11 @@ extern "C" void uel_(
         const double* propertiesUmat =    &properties[0];
         const double* propertiesElement = &properties[nPropertiesUmat];
 
-        BftUel* myUel = userLibrary::UelFactory(elementCode, propertiesElement, nPropertiesElement, elementNumber, materialID, propertiesUmat, nPropertiesUmat); 
+        BftUel* myUel = userLibrary::UelFactory(elementCode,  elementNumber);
+
+        myUel->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+
+        myUel->assignProperty( BftMaterialSection( materialID, propertiesUmat, nPropertiesUmat) );
 
         const int nNecessaryStateVars = myUel->getNumberOfRequiredStateVars();
 
