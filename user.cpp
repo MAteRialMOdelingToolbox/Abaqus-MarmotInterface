@@ -1,22 +1,21 @@
 #include <aba_for_c.h>
 #include "userLibrary.h"
 #include <iostream>
+#include <memory>
 #include <string>
 #include <sstream>
-#include "bftUel.h"
-#include "bftUelProperty.h"
+#include "bftElement.h"
+#include "bftElementProperty.h"
 #include "bftMaterialHypoElastic.h"
-
-//These functions are provided to the 'sub' UMATs for easy printing Messages and Warnings. 
-//
 
 namespace MainConstants
 {
-	bool printWarnings = false;    
-	bool printMessages = false;
-
     enum AdditionalDefinitions {
         GeostaticStressDefiniton = 0x01 << 0,
+    };
+
+    enum UelFlags1 {         
+        GeostaticStress = 61, // Geostatic stress field according to Abaqus Analysis User's Guide Tab. 5.1.2-1 Keys to                               // procedure types.     
     };
 }
 
@@ -32,30 +31,12 @@ class MakeString
 
 extern "C" 
 {
-        void stdb_abqerr_(const int *lop, const char* stringZT, const int *intArray, const double *realArray, const char *appendix, const int lengthString, const int lengthAppendix);
-        void xit_();
-}
-
-extern "C" bool warningToMSG(const std::string& message)
-{
-    // return always false(!)
-    const int lop = -1;
-    if(MainConstants::printWarnings)
-            stdb_abqerr_(&lop, message.c_str(), nullptr , nullptr , nullptr, message.length(), 0);
-    return false;
-}
-
-extern "C" bool notificationToMSG(const std::string& message)
-{
-    // return always true(!)
-    const int lop = 1;
-    if(MainConstants::printMessages)
-			stdb_abqerr_(&lop, message.c_str(), nullptr , nullptr , nullptr, message.length(), 0);
-    return true;
+        void FOR_NAME(stdb_abqerr, STDB_ABQERR)(const int *lop, const char* stringZT, const int *intArray, const double *realArray, const char *appendix, const int lengthString, const int lengthAppendix);
+        void FOR_NAME(xit, XIT)();
 }
 
 
-extern "C" void uel_(
+extern "C" void FOR_NAME(uel, UEL)(
         double rightHandSide[/*lVarx , nRightHandSide*/],           // right hand side load vector(s) 1: common, 2: additional for RIKS (see documentation)
         double KMatrix[/*nDof * nDof*/],                            // stiffness matrix 
         double stateVars[],                                         // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
@@ -105,7 +86,7 @@ extern "C" void uel_(
         const double* propertiesUmat =    &properties[0];
         const double* propertiesElement = &properties[nPropertiesUmat];
 
-        BftUel* myUel = userLibrary::UelFactory(elementCode,  elementNumber);
+        auto myUel = std::unique_ptr<BftElement> ( userLibrary::bftElementFactory(elementCode,  elementNumber) );
 
         myUel->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
 
@@ -122,25 +103,24 @@ extern "C" void uel_(
 
         int additionalDefinitionProperties = 0;
         if( additionalDefinitions & MainConstants::AdditionalDefinitions::GeostaticStressDefiniton ) {
-            if(lFlags[0] == Abaqus::UelFlags1::GeostaticStress){
+            if(lFlags[0] == MainConstants::UelFlags1::GeostaticStress){
                 const double* geostaticProperties = &propertiesElement[ nPropertiesElement + additionalDefinitionProperties ];
-                myUel->setInitialConditions( BftUel::GeostaticStress, geostaticProperties ); }
+                myUel->setInitialConditions( BftElement::GeostaticStress, geostaticProperties ); }
             additionalDefinitionProperties += 5;  
         }
 
         // compute K and P 
         myUel->computeYourself(U , dU, rightHandSide, KMatrix, time, dTime, pNewDT); 
 
-        // compute distributed loads in nodal forces and add it to P 
+        //// compute distributed loads in nodal forces and add it to P 
         //for (int i =0; i<mDload; i++){
-            //if (distributedLoadMags[i]<1.e-16)
+            //if ([i]<1.e-16)
                 //continue;
-            //myUel->computeDistributedLoad(BftUel::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
+            //myUel->computeDistributedLoad(BftElement::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
 
-        delete myUel;
 }
 
-extern "C" void umat_(
+extern "C" void FOR_NAME(umat, UMAT)(
         /*to be def.*/  double stress[],                // stress vector in order: S11, S22, (S33), S12, (S13), (S23) 
         /*to be def.*/  double stateVars[],        // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
         /*to be def.*/  double dStressDDStrain[],  // material Jacobian matrix ddSigma/ddEpsilon
@@ -193,31 +173,48 @@ extern "C" void umat_(
             materialCode = userLibrary::getMaterialCodeFromName ( strippedName ); 
 
             stateVars[nStateVars-1] = static_cast<double> (materialCode);
-
         }
 
-        BftMaterialHypoElastic* material = dynamic_cast<BftMaterialHypoElastic*> (bftMaterialFactory( materialCode, materialProperties, nMaterialProperties, noEl, nPt)); 
+        auto material = std::unique_ptr<BftMaterialHypoElastic> (
+                dynamic_cast<BftMaterialHypoElastic*> (
+                    bftMaterialFactory( materialCode, materialProperties, nMaterialProperties, noEl, nPt)));
 
         const int nStateVarsForUmat = nStateVars - 1;
 
         if ( material->getNumberOfRequiredStateVars () > nStateVarsForUmat )  {
             const std::string materialName(matName);
-            throw std::invalid_argument( MakeString() << "Material " << materialName.substr(0, materialName.find_first_of(' ')) << ": insufficient stateVars (" << nStateVars << " - 1) provided, but " << material->getNumberOfRequiredStateVars()<<" are required");
+            throw std::invalid_argument( MakeString() << "Material " << materialName.substr(0, materialName.find_first_of(' ')) 
+                    << ": insufficient stateVars (" << nStateVars << " - 1) provided, but " << material->getNumberOfRequiredStateVars()<<" are required");
         }
         material->assignStateVars(stateVars, nStateVarsForUmat);
 
         material->setCharacteristicElementLength(charElemLength);
         
-        double stress6[6], strain6[6], dStrain6[6], dStressDDStrain66[36];
-        userLibrary::extendAbaqusToVoigt(stress6, stress, strain6, strain, dStrain6, dStrain, nDirect, nShear);
+        double stress6[6] = {};
+        double dStrain6[6] = {};
+        double dStressDDStrain66[36] = {};
 
+        int abq2voigt [nTensor];
+        for ( int i = 0; i < nTensor; i++)
+            abq2voigt[ i ] = ( i < nDirect ) ? i : 3 + i ;
+
+	    // expand Voigt
+        for (int i = 0; i < nTensor; i++) {
+            stress6 [ abq2voigt[ i ] ] = stress[ i ];
+            dStrain6 [ abq2voigt[ i ] ] = dStrain [ i ];
+        }
+
+	    // call material
         if(nDirect == 3) 
-            material->computeStress(stress6, dStressDDStrain66, strain6, dStrain6, time, dtime, pNewDT);
+            material->computeStress(stress6, dStressDDStrain66,  dStrain6, time, dtime, pNewDT);
         else if(nDirect == 2)
-            material->computePlaneStress(stress6, dStressDDStrain66, strain6, dStrain6, time, dtime, pNewDT);
+            material->computePlaneStress(stress6, dStressDDStrain66,  dStrain6, time, dtime, pNewDT);
 
-        userLibrary::backToAbaqus(stress, stress6, dStressDDStrain, dStressDDStrain66, nDirect, nShear);
-
-        delete material;
+	    // condense Voigt
+        for (int i = 0; i < nTensor; i++) {
+            stress[ i ] = stress6[ abq2voigt[ i ] ];
+            for (int j = 0; j < nTensor; j++)
+                dStressDDStrain[ nTensor * i +  j ] = dStressDDStrain66[ 6 * abq2voigt[ i ] + abq2voigt [ j ] ];
+            }
 }
 
