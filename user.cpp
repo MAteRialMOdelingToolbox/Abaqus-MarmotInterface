@@ -195,10 +195,12 @@ extern "C" void FOR_NAME(umat, UMAT)(
         double dStressDDStrain66[36] = {};
 
         int abq2voigt [nTensor];
-        for ( int i = 0; i < nTensor; i++)
-            abq2voigt[ i ] = ( i < nDirect ) ? i : 3 + i ;
-
-	    // expand Voigt
+        for (int i = 0; i < nDirect; i++)
+            abq2voigt[ i ] = i;
+        for (int i = 0; i < nShear; i++)
+            abq2voigt[ nDirect+i ]   = 3 + i;
+        
+        // expand Voigt
         for (int i = 0; i < nTensor; i++) {
             stress6 [ abq2voigt[ i ] ] = stress[ i ];
             dStrain6 [ abq2voigt[ i ] ] = dStrain [ i ];
