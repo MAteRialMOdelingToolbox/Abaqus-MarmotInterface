@@ -86,7 +86,7 @@ extern "C" void FOR_NAME(uel, UEL)(
         const double* propertiesUmat =    &properties[0];
         const double* propertiesElement = &properties[nPropertiesUmat];
 
-        auto myUel = std::unique_ptr<BftElement> ( userLibrary::bftElementFactory(elementCode,  elementNumber) );
+        auto myUel = std::unique_ptr<BftElement> ( userLibrary::BftElementFactory::createElement(elementCode,  elementNumber) );
 
         myUel->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
 
@@ -170,14 +170,14 @@ extern "C" void FOR_NAME(umat, UMAT)(
             const std::string materialName(matName);
             const std::string strippedName = materialName.substr(0, materialName.find_first_of(' ')). substr(0, materialName.find_first_of('-'));
 
-            materialCode = userLibrary::getMaterialCodeFromName ( strippedName ); 
+            materialCode = userLibrary::BftMaterialFactory::getMaterialCodeFromName ( strippedName ); 
 
             stateVars[nStateVars-1] = static_cast<double> (materialCode);
         }
 
         auto material = std::unique_ptr<BftMaterialHypoElastic> (
                 dynamic_cast<BftMaterialHypoElastic*> (
-                    bftMaterialFactory( materialCode, materialProperties, nMaterialProperties, noEl, nPt)));
+                    userLibrary::BftMaterialFactory::createMaterial( materialCode, materialProperties, nMaterialProperties, noEl, nPt)));
 
         const int nStateVarsForUmat = nStateVars - 1;
 
