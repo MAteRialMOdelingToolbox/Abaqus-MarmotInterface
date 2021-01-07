@@ -1,12 +1,12 @@
 #include <aba_for_c.h>
-#include "userLibrary.h"
+#include "MarmotLibrary.h"
 #include <iostream>
 #include <memory>
 #include <string>
 #include <sstream>
-#include "bftElement.h"
-#include "bftElementProperty.h"
-#include "bftMaterialHypoElastic.h"
+#include "MarmotElement.h"
+#include "MarmotElementProperty.h"
+#include "MarmotMaterialHypoElastic.h"
 
 namespace MainConstants
 {
@@ -46,8 +46,8 @@ extern "C" void FOR_NAME(uel, UEL)(
         const int &nStateVars, 
         const double properties[/*nProperties*/],
         const int &nProperties,
-        const double coordinates[/*mcrd, nNodes*/],                    // undeformed coordinates of the node respective DOFs
-        const int &maxNCoords,                                        // max number of coordinates (see documentation)
+        const double coordinates[/*mcrd, nNodes*/],                 // undeformed coordinates of the node respective DOFs
+        const int &maxNCoords,                                      // max number of coordinates (see documentation)
         const int &nNodes,                  
         const double U[/*nDof*/],                                   // current solution (end of increment)
         const double dU[/*mlvarx=nDof(?), nRightHandSide*/],        // increment of solutions
@@ -75,10 +75,10 @@ extern "C" void FOR_NAME(uel, UEL)(
         const double &period)
 {    
         if ( nIntegerProperties != 5 )
-            throw std::invalid_argument( MakeString() << "Uel: insufficient integer properties (" << nIntegerProperties <<") provided, but 5 are required");
+            throw std::invalid_argument( MakeString() << "Marmot: insufficient integer properties (" << nIntegerProperties <<") provided, but 5 are required");
 
-        userLibrary::ElementCode elementCode =  static_cast<userLibrary::ElementCode> ( integerProperties[0]);
-        userLibrary::MaterialCode materialID =  static_cast<userLibrary::MaterialCode>( integerProperties[1] );
+        MarmotLibrary::ElementCode elementCode =  static_cast<MarmotLibrary::ElementCode> ( integerProperties[0]);
+        MarmotLibrary::MaterialCode materialID =  static_cast<MarmotLibrary::MaterialCode>( integerProperties[1] );
         const int nPropertiesElement =          integerProperties[2];
         const int nPropertiesUmat =             integerProperties[3];
         const int additionalDefinitions =       integerProperties[4];
@@ -86,44 +86,44 @@ extern "C" void FOR_NAME(uel, UEL)(
         const double* propertiesUmat =    &properties[0];
         const double* propertiesElement = &properties[nPropertiesUmat];
 
-        auto myUel = std::unique_ptr<BftElement> ( userLibrary::BftElementFactory::createElement(elementCode,  elementNumber) );
+        auto theElement = std::unique_ptr<MarmotElement> ( MarmotLibrary::MarmotElementFactory::createElement(elementCode,  elementNumber) );
 
-        myUel->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+        theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
 
-        myUel->assignProperty( BftMaterialSection( materialID, propertiesUmat, nPropertiesUmat) );
+        theElement->assignProperty( MarmotMaterialSection( materialID, propertiesUmat, nPropertiesUmat) );
 
-        const int nNecessaryStateVars = myUel->getNumberOfRequiredStateVars();
+        const int nNecessaryStateVars = theElement->getNumberOfRequiredStateVars();
 
         if ( nNecessaryStateVars > nStateVars )
-            throw std::invalid_argument( MakeString() << "Uel with code " << elementCode << " and material " << materialID << ": insufficient stateVars (" << nStateVars <<") provided, but "<< nNecessaryStateVars <<" are required");
+            throw std::invalid_argument( MakeString() << "MarmotElement with code " << elementCode << " and material " << materialID << ": insufficient stateVars (" << nStateVars <<") provided, but "<< nNecessaryStateVars <<" are required");
 
-        myUel->assignStateVars(stateVars, nStateVars);
+        theElement->assignStateVars(stateVars, nStateVars);
 
-        myUel->initializeYourself(coordinates);
+        theElement->initializeYourself(coordinates);
 
         int additionalDefinitionProperties = 0;
         if( additionalDefinitions & MainConstants::AdditionalDefinitions::GeostaticStressDefiniton ) {
             if(lFlags[0] == MainConstants::UelFlags1::GeostaticStress){
                 const double* geostaticProperties = &propertiesElement[ nPropertiesElement + additionalDefinitionProperties ];
-                myUel->setInitialConditions( BftElement::GeostaticStress, geostaticProperties ); }
+                theElement->setInitialConditions( MarmotElement::GeostaticStress, geostaticProperties ); }
             additionalDefinitionProperties += 5;  
         }
 
         // compute K and P 
-        myUel->computeYourself(U , dU, rightHandSide, KMatrix, time, dTime, pNewDT); 
+        theElement->computeYourself(U , dU, rightHandSide, KMatrix, time, dTime, pNewDT); 
 
         //// compute distributed loads in nodal forces and add it to P 
         //for (int i =0; i<mDload; i++){
             //if ([i]<1.e-16)
                 //continue;
-            //myUel->computeDistributedLoad(BftElement::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
+            //theElement->computeDistributedLoad(MarmotElement::Pressure, rightHandSide, distributedLoadTypes[i], &distributedLoadMags[i], time, dTime);}
 
 }
 
 extern "C" void FOR_NAME(umat, UMAT)(
         /*to be def.*/  double stress[],                // stress vector in order: S11, S22, (S33), S12, (S13), (S23) 
-        /*to be def.*/  double stateVars[],        // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
-        /*to be def.*/  double dStressDDStrain[],  // material Jacobian matrix ddSigma/ddEpsilon
+        /*to be def.*/  double stateVars[],             // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
+        /*to be def.*/  double dStressDDStrain[],       // material Jacobian matrix ddSigma/ddEpsilon
         /*to be def.*/  double &sSE,                    // specific elastic strain energy  |-
         /*to be def.*/  double &sPD,                    // specific plastic dissipation    |---> Should be defined in Abaqus/Standard
         /*to be def.*/  double &sCD,                    // specific creep dissipation      |-
@@ -146,9 +146,9 @@ extern "C" void FOR_NAME(umat, UMAT)(
         const   int &nDirect,                           // number of direct stress components @ this point
         const   int &nShear,                            // number of engineering shear stress components @ this point
         const   int &nTensor,                           // size of stress and strain component array (nDirect + nShear)
-        const   int &nStateVars,                            // number of solution dependent state variables associated with this mat. type
-        const   double materialProperties[],                         // user def. array of mat. constants associated with this material
-        const   int &nMaterialProperties,                            // number of user def. variables
+        const   int &nStateVars,                        // number of solution dependent state variables associated with this mat. type
+        const   double materialProperties[],            // user def. array of mat. constants associated with this material
+        const   int &nMaterialProperties,               // number of user def. variables
         const   double coords[3],                       // coordinates of this point
         const   double dRot[9],                         // rotation increment matrix 3x3
         /*may be def.*/ double &pNewDT,                 // propagation for new time increment
@@ -165,25 +165,25 @@ extern "C" void FOR_NAME(umat, UMAT)(
         const   int matNameLength                       // length of Material Name := 80, passed in when FORTRAN calls c/c++: Microsoft C compiler AND GCC (it *may* differ for IntelC++)
         ){       
           
-        userLibrary::MaterialCode materialCode = static_cast<userLibrary::MaterialCode> ( stateVars[nStateVars-1] );
+        MarmotLibrary::MaterialCode materialCode = static_cast<MarmotLibrary::MaterialCode> ( stateVars[nStateVars-1] );
         if ( materialCode <= 0 ){
             const std::string materialName(matName);
             const std::string strippedName = materialName.substr(0, materialName.find_first_of(' ')). substr(0, materialName.find_first_of('-'));
 
-            materialCode = userLibrary::BftMaterialFactory::getMaterialCodeFromName ( strippedName ); 
+            materialCode = MarmotLibrary::MarmotMaterialFactory::getMaterialCodeFromName ( strippedName ); 
 
             stateVars[nStateVars-1] = static_cast<double> (materialCode);
         }
 
-        auto material = std::unique_ptr<BftMaterialHypoElastic> (
-                dynamic_cast<BftMaterialHypoElastic*> (
-                    userLibrary::BftMaterialFactory::createMaterial( materialCode, materialProperties, nMaterialProperties, noEl, nPt)));
+        auto material = std::unique_ptr<MarmotMaterialHypoElastic> (
+                dynamic_cast<MarmotMaterialHypoElastic*> (
+                    MarmotLibrary::MarmotMaterialFactory::createMaterial( materialCode, materialProperties, nMaterialProperties, noEl, nPt)));
 
         const int nStateVarsForUmat = nStateVars - 1;
 
         if ( material->getNumberOfRequiredStateVars () > nStateVarsForUmat )  {
             const std::string materialName(matName);
-            throw std::invalid_argument( MakeString() << "Material " << materialName.substr(0, materialName.find_first_of(' ')) 
+            throw std::invalid_argument( MakeString() << "MarmotMaterial " << materialName.substr(0, materialName.find_first_of(' ')) 
                     << ": insufficient stateVars (" << nStateVars << " - 1) provided, but " << material->getNumberOfRequiredStateVars()<<" are required");
         }
         material->assignStateVars(stateVars, nStateVarsForUmat);
