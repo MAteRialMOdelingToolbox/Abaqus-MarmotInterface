@@ -1,12 +1,12 @@
 #include <aba_for_c.h>
-#include "MarmotLibrary.h"
+#include "Marmot/Marmot.h"
 #include <iostream>
 #include <memory>
 #include <string>
 #include <sstream>
-#include "MarmotElement.h"
-#include "MarmotElementProperty.h"
-#include "MarmotMaterialHypoElastic.h"
+#include "Marmot/MarmotElement.h"
+#include "Marmot/MarmotElementProperty.h"
+#include "Marmot/MarmotMaterialHypoElastic.h"
 
 namespace MainConstants
 {
@@ -177,7 +177,7 @@ extern "C" void FOR_NAME(umat, UMAT)(
 
         auto material = std::unique_ptr<MarmotMaterialHypoElastic> (
                 dynamic_cast<MarmotMaterialHypoElastic*> (
-                    MarmotLibrary::MarmotMaterialFactory::createMaterial( materialCode, materialProperties, nMaterialProperties, noEl, nPt)));
+                    MarmotLibrary::MarmotMaterialFactory::createMaterial( materialCode, materialProperties, nMaterialProperties, noEl )));
 
         const int nStateVarsForUmat = nStateVars - 1;
 
