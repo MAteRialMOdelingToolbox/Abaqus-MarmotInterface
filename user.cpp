@@ -219,4 +219,3 @@ extern "C" void FOR_NAME(umat, UMAT)(
                 dStressDDStrain[ nTensor * i +  j ] = dStressDDStrain66[ 6 * abq2voigt[ i ] + abq2voigt [ j ] ];
             }
 }
-
