@@ -17,7 +17,7 @@ To make the interface compatible with older versions of Abaqus, change all ```FO
 
 A Marmot material is defined as follows in your ```.inp```-file. For the sake of simplicity, a simple LinearElastic material model from Marmot is used.
 
-```
+```abaqus
 ** 
 ** Define your desired user material
 ** name ... name of your user-material (not case sensitive, since the Abaqus 
