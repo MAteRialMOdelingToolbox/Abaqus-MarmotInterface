@@ -6,8 +6,8 @@ This interface files enable the usage of [Marmot](https://github.com/MAteRialMOd
 ## How to use Abaqus together with Marmot
 
 1. Copy one of the environment files (```abaqus_v6.env_gcc_compiler_linux``` is recommended) to your working directory and rename it to ```abaqus_v6.env```.
-2. Set environment variable ```MARMOT_DIR``` to your ```Marmot``` directory containing the precompiled ```Marmot``` library.
-3. Call your Abaqus job file via the command line ```abaqus j=myJob.inp cpus=1 user=user.cpp interactive```. 
+2. Set environment variable ```MARMOT_DIR``` to your ```Marmot``` directory containing the precompiled ```Marmot``` library. The default value of ```MARMOT_DIR``` will be set to ```/usr/local```.
+3. Call your Abaqus job file via the command line ```abaqus j=myJob.inp user=user.cpp interactive```. 
 
 ## Necessary changes for the usage with Abaqus version<2019
 
