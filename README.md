@@ -1,6 +1,7 @@
 # Abaqus Marmot Interface
 
-Interface files for the usage of [Marmot](https://github.com/MAteRialMOdelingToolbox/marmot) in Abaqus 2019.
+This interface files enable the usage of [Marmot](https://github.com/MAteRialMOdelingToolbox/marmot) in the FEA software package Abaqus.
+
 
 ## How to use Abaqus together with Marmot
 
