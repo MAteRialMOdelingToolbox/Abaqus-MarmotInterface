@@ -18,8 +18,19 @@ To make the interface compatible with older versions of Abaqus, change all ```FO
 A Marmot material is defined as follows in your ```.inp```-file. For the sake of simplicity, a simple ```LinearElastic``` material model from Marmot is used.
 
 ```abaqus
+**                                       _   
+**  _ __ ___   __ _ _ __ _ __ ___   ___ | |_ 
+** | '_ ` _ \ / _` | '__| '_ ` _ \ / _ \| __|
+** | | | | | | (_| | |  | | | | | | (_) | |_ 
+** |_| |_| |_|\__,_|_|  |_| |_| |_|\___/ \__|
+**
 ** 
-** Define your desired user material
+** Define your desired user material; The following lines may be simply copied 
+** and modified for your purposes.
+** 
+** --------------------------------------------------------------------------
+** 
+** 
 ** name ... name of your user-material (not case sensitive, since the Abaqus 
 **          input reader is not); if you have multiple set of properties just
 **          add -1, -2 as a suffix, e.g., LinearElastic-1, LinearElastic-2
