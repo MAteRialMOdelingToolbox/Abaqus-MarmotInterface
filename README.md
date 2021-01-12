@@ -15,7 +15,7 @@ To make the interface compatible with older versions of Abaqus, change all ```FO
 
 ## How to define material properties for using a material model of Marmot
 
-A Marmot material is defined as follows in your ```.inp```-file. For the sake of simplicity, a simple LinearElastic material model from Marmot is used.
+A Marmot material is defined as follows in your ```.inp```-file. For the sake of simplicity, a simple ```LinearElastic``` material model from Marmot is used.
 
 ```abaqus
 ** 
