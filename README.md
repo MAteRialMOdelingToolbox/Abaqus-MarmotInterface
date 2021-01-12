@@ -39,11 +39,13 @@ A Marmot material is defined as follows in your ```.inp```-file. For the sake of
 ** 
 1, eps11, "normal strain in horizontal direction"
 ** 
-** The material properties of the user material are defined. To this end, the 
-** allocation of unsymmetric system matrix should be activated. The number of
-** material properties must be defined by the constants parameter. The latter 
-** can be found in the constructor of your material model. An assert is called
-** in Marmot, when the number of constants is too small.
+** In the following lines, the material properties of the user material are 
+** defined. If the system matrix will be unsymmetric (e.g. for non-associated
+** plasticity models), the unsymm keyword must be added. To determine the number 
+** of material properties the parameter constants must be specified. The required 
+** number of material properties can be found for each Marmot material in the 
+** constructor. An assert is called in Marmot, when the number of constants is
+** chosen too small.
 **
 *User Material, unsymm, Constants=2
 ** 
