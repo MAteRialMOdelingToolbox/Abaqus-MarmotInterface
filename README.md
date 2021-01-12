@@ -15,7 +15,46 @@ To make the interface compatible with older versions of Abaqus, change all ```FO
 
 ## How to define material properties for using a material model of Marmot
 
-todo
+A Marmot material is defined as follows in your ```.inp```-file. For the sake of simplicity, a simple LinearElastic material model from Marmot is used.
+
+```
+** 
+** Define your desired user material
+** name ... name of your user-material (not case sensitive, since the Abaqus 
+**          input reader is not); if you have multiple set of properties just
+**          add -1, -2 as a suffix, e.g., LinearElastic-1, LinearElastic-2
+** 
+*Material, name=LinearElastic-1
+** 
+** Define the number of state variables; The number of required state variables 
+** can be found in the header file of your material model defined within the 
+** method getNumberOfRequiredStateVars(). If a too small number is chosen, an 
+** exception is thrown anyhow.
+** 
+*Depvar
+1
+** 
+** The following lines are optional and enable the description of the individual
+** state variables.
+** 
+1, eps11, "normal strain in horizontal direction"
+** 
+** The material properties of the user material are defined. To this end, the 
+** allocation of unsymmetric system matrix should be activated. The number of
+** material properties must be defined by the constants parameter. The latter 
+** can be found in the constructor of your material model. An assert is called
+** in Marmot, when the number of constants is too small.
+**
+*User Material, unsymm, Constants=2
+** 
+** In the following lines, the material properties are specified. Please make 
+** sure that not more than 8 (!) numbers are specified per line (this is a 
+** convention from Abaqus). If you need more than 8 parameters, start with a
+** new line.
+**
+** E    nu
+30000, 0.2
+```
 
 ## How to define element properties for using a finite element defined in Marmot
 
