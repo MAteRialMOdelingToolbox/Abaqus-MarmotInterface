@@ -39,6 +39,7 @@ namespace MainConstants
 {
     enum AdditionalDefinitions {
         GeostaticStressDefiniton = 0x01 << 0,
+        MarmotMaterialInitialization = 0x01 << 1,
     };
 
     enum UelFlags1 {         
@@ -134,6 +135,11 @@ extern "C" void FOR_NAME(uel, UEL)(
                 const double* geostaticProperties = &propertiesElement[ nPropertiesElement + additionalDefinitionProperties ];
                 theElement->setInitialConditions( MarmotElement::GeostaticStress, geostaticProperties ); }
             additionalDefinitionProperties += 5;  
+        }
+
+        if( additionalDefinitions & MainConstants::AdditionalDefinitions::MarmotMaterialInitialization 
+                && stepNumber == 1 && incrementNumber == 1) {
+            theElement->setInitialConditions( MarmotElement::MarmotMaterialInitialization, nullptr); 
         }
 
         // compute K and P 
