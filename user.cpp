@@ -156,7 +156,7 @@ extern "C" void FOR_NAME(uel, UEL)(
 extern "C" void FOR_NAME(umat, UMAT)(
         /*to be def.*/  double stress[],                // stress vector in order: S11, S22, (S33), S12, (S13), (S23) 
         /*to be def.*/  double stateVars[],             // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
-        /*to be def.*/  double dStressDDStrain[],       // material Jacobian matrix ddSigma/ddEpsilon
+        /*to be def.*/  double dStress_dStrain[],       // material Jacobian matrix ddSigma/ddEpsilon
         /*to be def.*/  double &sSE,                    // specific elastic strain energy  |-
         /*to be def.*/  double &sPD,                    // specific plastic dissipation    |---> Should be defined in Abaqus/Standard
         /*to be def.*/  double &sCD,                    // specific creep dissipation      |-
@@ -217,38 +217,45 @@ extern "C" void FOR_NAME(umat, UMAT)(
         if ( material->getNumberOfRequiredStateVars () > nStateVarsForUmat )  {
             const std::string materialName(matName);
             throw std::invalid_argument( MakeString() << "MarmotMaterial " << materialName.substr(0, materialName.find_first_of(' ')) 
-                    << ": insufficient stateVars (" << nStateVars << " - 1) provided, but " << material->getNumberOfRequiredStateVars()<<" are required");
+                    << ": insufficient stateVars (" << nStateVars << ") provided, but " << material->getNumberOfRequiredStateVars() + 1 <<" are required");
         }
         material->assignStateVars(stateVars, nStateVarsForUmat);
 
         material->setCharacteristicElementLength(charElemLength);
         
-        double stress6[6] = {};
-        double dStrain6[6] = {};
-        double dStressDDStrain66[36] = {};
-
-        int abq2voigt [nTensor];
-        for (int i = 0; i < nDirect; i++)
-            abq2voigt[ i ] = i;
-        for (int i = 0; i < nShear; i++)
-            abq2voigt[ nDirect+i ]   = 3 + i;
-        
-        // expand Voigt
-        for (int i = 0; i < nTensor; i++) {
-            stress6 [ abq2voigt[ i ] ] = stress[ i ];
-            dStrain6 [ abq2voigt[ i ] ] = dStrain [ i ];
-        }
-
 	    // call material
         if(nDirect == 3) 
-            material->computeStress(stress6, dStressDDStrain66,  dStrain6, time, dtime, pNewDT);
-        else if(nDirect == 2)
-            material->computePlaneStress(stress6, dStressDDStrain66,  dStrain6, time, dtime, pNewDT);
+        {
+            // either 3D, plane strain or axisymmetric case
+            double stress6[6] = {};
+            double dStrain6[6] = {};
+            double dStress_dStrain66[36] = {};
 
-	    // condense Voigt
-        for (int i = 0; i < nTensor; i++) {
-            stress[ i ] = stress6[ abq2voigt[ i ] ];
-            for (int j = 0; j < nTensor; j++)
-                dStressDDStrain[ nTensor * i +  j ] = dStressDDStrain66[ 6 * abq2voigt[ i ] + abq2voigt [ j ] ];
+            int abq2voigt [nTensor];
+            for (int i = 0; i < nDirect; i++)
+                abq2voigt[ i ] = i;
+            for (int i = 0; i < nShear; i++)
+                abq2voigt[ nDirect+i ]   = 3 + i;
+            
+            // expand Voigt
+            for (int i = 0; i < nTensor; i++) {
+                stress6 [ abq2voigt[ i ] ] = stress[ i ];
+                dStrain6 [ abq2voigt[ i ] ] = dStrain [ i ];
             }
+            material->computeStress(stress6, dStress_dStrain66,  dStrain6, time, dtime, pNewDT);
+
+	        // condense Voigt
+            for (int i = 0; i < nTensor; i++) {
+                stress[ i ] = stress6[ abq2voigt[ i ] ];
+                for (int j = 0; j < nTensor; j++)
+                    dStress_dStrain[ nTensor * i +  j ] = dStress_dStrain66[ 6 * abq2voigt[ i ] + abq2voigt [ j ] ];
+                }
+        }
+        else if(nDirect == 2) {
+            material->computePlaneStress(stress, dStress_dStrain, dStrain, time, dtime, pNewDT);
+        }
+        else if(nDirect == 1){
+            material->computeUniaxialStress(stress, dStress_dStrain, dStrain, time, dtime, pNewDT);
+        }
+
 }
