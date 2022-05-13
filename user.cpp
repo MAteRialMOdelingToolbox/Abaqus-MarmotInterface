@@ -116,6 +116,8 @@ extern "C" void FOR_NAME(uel, UEL)(
 
         auto theElement = std::unique_ptr<MarmotElement> ( MarmotLibrary::MarmotElementFactory::createElement(elementCode,  elementNumber) );
 
+        theElement->assignNodeCoordinates( coordinates );
+
         theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
 
         theElement->assignProperty( MarmotMaterialSection( materialID, propertiesUmat, nPropertiesUmat) );
@@ -127,7 +129,7 @@ extern "C" void FOR_NAME(uel, UEL)(
 
         theElement->assignStateVars(stateVars, nStateVars);
 
-        theElement->initializeYourself(coordinates);
+        theElement->initializeYourself();
 
         int additionalDefinitionProperties = 0;
         if( additionalDefinitions & MainConstants::AdditionalDefinitions::GeostaticStressDefiniton ) {
