@@ -257,8 +257,7 @@ extern "C" void FOR_NAME(vuel, VUEL)
   if ( nIntegerProperties != 5 )
     throw std::invalid_argument( MakeString()
                                  << "Marmot: insufficient integer properties (" << nIntegerProperties
-                                 << ") provided, but 5 are required: elementCode, materialCode, nPropertiesElement, "
-                                    "nPropertiesMaterial, additionalDefinitions, nStateVarsMaterial " );
+                                 << ") provided, but 5 are required: elementCode, materialCode, nPropertiesMaterial, nPropertiesElement, additionalDefinitions, nStateVarsMaterial " );
 
   const int elementCode           = integerProperties[0];
   const int materialCode          = integerProperties[1];
