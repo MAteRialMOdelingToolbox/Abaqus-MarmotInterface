@@ -262,12 +262,12 @@ extern "C" void FOR_NAME(vuel, VUEL)
 
   const int elementCode           = integerProperties[0];
   const int materialCode          = integerProperties[1];
-  const int nPropertiesElement    = integerProperties[2];
-  const int nPropertiesMaterial   = integerProperties[3];
+  const int nPropertiesMaterial   = integerProperties[2];
+  const int nPropertiesElement    = integerProperties[3];
   const int additionalDefinitions = integerProperties[4];
 
   const double* materialProperties = properties;
-  const double* elementProperties  = properties + nPropertiesElement;
+  const double* elementProperties  = properties + nPropertiesMaterial;
 
   const int nElEnergies = 12;
 
