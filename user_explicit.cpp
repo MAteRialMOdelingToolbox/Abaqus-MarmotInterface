@@ -247,7 +247,8 @@ extern "C" void FOR_NAME(vuel, VUEL)
                                         const int&    kstep,
                                         const int&    kinc,
                                         const int*    lflags,
-                                        const double* massScaleFactor,
+                                        const double* massScaleFactor, // this parameter seems to be always zero; needs to be
+                                                                       // checked
                                         const double* predef,
                                         const int&    npredef,
                                         const int&    jdltyp,
@@ -293,6 +294,8 @@ extern "C" void FOR_NAME(vuel, VUEL)
   auto theElement = std::unique_ptr< MarmotElementExplicit >(
     MarmotLibrary::MarmotElementExplicitFactory::createElement( elementCode, 0 ) );
 
+  theElement->assignProperties( elementProperties, nPropertiesElement );
+
   theElement->assignMaterial( theMaterial );
 
   const auto& procedureType = lflags[0]; // 17 = explicit dynamic, 74 = explicit fully coupled thermo-mechanical
@@ -319,12 +322,7 @@ extern "C" void FOR_NAME(vuel, VUEL)
 
       theElement->assignNodeCoordinates( elCoordinates_RowMajor.data() );
       theElement->initializeYourself();
-      theElement->computeConsistentMassMatrix( amassBlock_RowMajor.col( b ).data(),
-                                               massScaleFactor[b] == 0
-                                                 ? 1.0
-                                                 : massScaleFactor[b] // mass scale factor seems to be 0 always in
-                                                                      // Abaqus/Explictit ?
-      );
+      theElement->computeConsistentMassMatrix( amassBlock_RowMajor.col( b ).data() );
       theElement->lumpMassMatrix( amassBlock_RowMajor.col( b ).data() );
     }
 
