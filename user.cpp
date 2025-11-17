@@ -47,19 +47,6 @@ namespace MainConstants {
   };
 } // namespace MainConstants
 
-class MakeString {
-public:
-  std::stringstream stream;
-                    operator std::string() const { return stream.str(); }
-
-  template < class T >
-  MakeString& operator<<( T const& VAR )
-  {
-    stream << VAR;
-    return *this;
-  }
-};
-
 extern "C" {
 // clang-format off
 void FOR_NAME(stdb_abqerr,STDB_ABQERR)
