@@ -54,7 +54,7 @@ namespace MainConstants {
   //
 
 enum MutexIDs {
-  MutexID_ElementUelCodeSingletons = 1,
+  MutexID_UEL = 1,
   MutexID_ElementCache             = 2,
 };
 
@@ -103,10 +103,7 @@ void make_fstr80( char* dest, const std::string& src )
 }
 
 
-
-
-
-std::unordered_map< int, std::unique_ptr< MarmotElement > > elementCache;
+std::unordered_map< int, MarmotElement* > elementCache;
 
 class TableMap : public std::unordered_map< int, std::string >
 {
@@ -127,8 +124,7 @@ private:
 TableMap ElementTableMap;
 TableMap MaterialTableMap;
 
-struct AbaqusIntToStringTableReader {
-  static void readAllRowsInto( TableMap& map,
+void readAllIntToStringRowsInto( TableMap& map,
                                const std::string&                        tableCollectionName,
                                const std::string&                        tableLabel )
   {
@@ -213,7 +209,6 @@ struct AbaqusIntToStringTableReader {
     delete[] rParams;
     delete[] cParams;
   }
-};
 
 
 void loadIntToStringParameterTableOnceAndThreadSafe( const std::string& collection, const std::string& label,
@@ -222,26 +217,27 @@ void loadIntToStringParameterTableOnceAndThreadSafe( const std::string& collecti
   if ( map.isLoaded() )
     return;
 
-  MutexLock( MutexID_ElementUelCodeSingletons );
+  MutexLock( MutexID_UEL );
 
   if ( map.isLoaded() ) {
     /// this is just done for cosmetic reasons to avoid filling and deleting the map multiple times
-    MutexUnlock( MutexID_ElementUelCodeSingletons);
+    MutexUnlock( MutexID_UEL);
     return;
   }
-  AbaqusIntToStringTableReader::readAllRowsInto( map, collection, label );
+  readAllIntToStringRowsInto( map, collection, label );
   map.setLoaded( true );
 
-  MutexUnlock( MutexID_ElementUelCodeSingletons );
+  MutexUnlock( MutexID_UEL );
 }
 
 
 
 extern "C" void uexternaldb_( int* LOP, int* LRESTART, double* TIME, double* DTIME, int* KSTEP, int* KINC )
 {
+  MutexInit ( MutexID_UEL );
+  // MutexInit ( MutexID_ElementCache );
+
   if ( *LOP == 0 || *LOP == 4 ) {
-    MutexInit ( MutexID_ElementUelCodeSingletons );
-    MutexInit ( MutexID_ElementCache );
 
     ElementTableMap.setLoaded( false );
     MaterialTableMap.setLoaded( false );
@@ -252,7 +248,7 @@ extern "C" void uexternaldb_( int* LOP, int* LRESTART, double* TIME, double* DTI
 }
 
 // clang-format off
-extern "C" void FOR_NAME(uel,UEL)(
+extern "C" void uel_(
   double rightHandSide[/*lVarx , nRightHandSide*/], // right hand side load vector(s) 1: common, 2: additional for RIKS (see documentation)
   double KMatrix[/*nDof * nDof*/],                  // stiffness matrix
   double stateVars[], // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
@@ -294,11 +290,8 @@ extern "C" void FOR_NAME(uel,UEL)(
   loadIntToStringParameterTableOnceAndThreadSafe( "UEL_CODES", "UEL_ELEMENTS", ElementTableMap );
   loadIntToStringParameterTableOnceAndThreadSafe( "UEL_CODES", "UEL_MATERIALS", MaterialTableMap );
 
-  // auto& elCodeToElName   = ElementTableMapSingleton::instance();
-  // auto& matCodeToMatName = MaterialTableSingleton::instance();
-  //
-  auto& elCodeToElName   = ElementTableMap;
-  auto& matCodeToMatName = MaterialTableMap;
+  const auto& elCodeToElName   = ElementTableMap;
+  const auto& matCodeToMatName = MaterialTableMap;
 
   if ( nIntegerProperties != 5 )
     throw std::invalid_argument( MakeString() << "Marmot: insufficient integer properties (" << nIntegerProperties
@@ -307,11 +300,11 @@ extern "C" void FOR_NAME(uel,UEL)(
   const int& elCode                = integerProperties[0];
   const int& matCode               = integerProperties[1];
   const int& nPropertiesElement    = integerProperties[2];
-  const int& nPropertiesUmat       = integerProperties[3];
+  const int& nPropertiesMaterial   = integerProperties[3];
   const int& additionalDefinitions = integerProperties[4];
 
-  const double* propertiesUmat    = &properties[0];
-  const double* propertiesElement = &properties[nPropertiesUmat];
+  const double* propertiesMaterial = &properties[0];
+  const double* propertiesElement  = &properties[nPropertiesMaterial];
 
   // TODO: This will be obsolete once the Marmot-internal code system is abandoned
   const auto marmotInternalElementCode = MarmotLibrary::MarmotElementFactory::getElementCodeFromName(
@@ -319,52 +312,49 @@ extern "C" void FOR_NAME(uel,UEL)(
   const auto marmotInternalMaterialCode = MarmotLibrary::MarmotMaterialFactory::getMaterialCodeFromName(
     matCodeToMatName.at( matCode ) );
 
-  auto theElement = std::unique_ptr< MarmotElement >(
-    MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber ) );
+  // auto theElement = std::unique_ptr< MarmotElement >(
+  //   MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber ) );
 
-  theElement->assignNodeCoordinates( coordinates );
+  // theElement->assignNodeCoordinates( coordinates );
 
-  theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+  // theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
 
-  theElement->assignProperty( MarmotMaterialSection( marmotInternalMaterialCode, propertiesUmat, nPropertiesUmat ) );
+  // theElement->assignProperty( MarmotMaterialSection( marmotInternalMaterialCode, propertiesMaterial, nPropertiesMaterial ) );
 
-  const int nNecessaryStateVars = theElement->getNumberOfRequiredStateVars();
+  // const int nNecessaryStateVars = theElement->getNumberOfRequiredStateVars();
 
-  if ( nNecessaryStateVars > nStateVars )
-    throw std::invalid_argument( MakeString() << "MarmotElement with code " << marmotInternalElementCode << " and material "
-                                              << marmotInternalMaterialCode << ": insufficient stateVars (" << nStateVars
-                                              << ") provided, but " << nNecessaryStateVars << " are required" );
+  // if ( nNecessaryStateVars > nStateVars )
+  //   throw std::invalid_argument( MakeString() << "MarmotElement with code " << marmotInternalElementCode << " and material "
+  //                                             << marmotInternalMaterialCode << ": insufficient stateVars (" << nStateVars
+  //                                             << ") provided, but " << nNecessaryStateVars << " are required" );
 
+  MutexLock( MutexID_UEL );
+  // check if element already exists
+  if ( incrementNumber == 1 && stepNumber == 1 ){
+  auto it = elementCache.find( elementNumber );
+      if ( it == elementCache.end() ) {
 
-  // MarmotElement* theElement = nullptr;
+        // Create and insert into cache
+        elementCache[elementNumber] = MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber );
 
-  // MutexLock( MutexID_ElementCache );
+        auto theElement = elementCache[elementNumber];
+        // assign constant data (done once)
+        theElement->assignNodeCoordinates( coordinates );
+        theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+        theElement->assignProperty( MarmotMaterialSection( marmotInternalMaterialCode, propertiesMaterial, nPropertiesMaterial) );
+        theElement->assignStateVars( stateVars, nStateVars );
+        theElement->initializeYourself();
+      }
 
-  // // check if element already exists
-  // auto it = elementCache.find( elementNumber );
-  // if ( it == elementCache.end() ) {
+  }
 
-  //   // Create and insert into cache
-  //   auto newEl = std::unique_ptr< MarmotElement >(
-  //     MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber ) );
+  auto theElement = elementCache[elementNumber];
+  MutexUnlock( MutexID_UEL );
 
-  //   // assign constant data (done once)
-  //   newEl->assignNodeCoordinates( coordinates );
-  //   newEl->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
-  //   newEl->assignProperty( MarmotMaterialSection( marmotInternalMaterialCode, propertiesUmat, nPropertiesUmat ) );
-
-  //   // move into cache
-  //   theElement                  = newEl.get();
-  //   elementCache[elementNumber] = std::move( newEl );
-  // }
-
-  // theElement = elementCache[elementNumber].get();
-
-  // MutexUnlock( MutexID_ElementCache );
 
   theElement->assignStateVars( stateVars, nStateVars );
 
-  theElement->initializeYourself();
+  // theElement->initializeYourself();
 
   int additionalDefinitionProperties = 0;
   if ( additionalDefinitions & MainConstants::AdditionalDefinitions::GeostaticStressDefiniton ) {
@@ -382,6 +372,8 @@ extern "C" void FOR_NAME(uel,UEL)(
 
   // compute K and P
   theElement->computeYourself( U, dU, rightHandSide, KMatrix, time, dTime, pNewDT );
+
+
 
   //// compute distributed loads in nodal forces and add it to P
   // for (int i =0; i<mDload; i++){
