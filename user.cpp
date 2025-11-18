@@ -40,39 +40,6 @@
 
 #include <unordered_map>
 
-template < typename Tag >
-class IntToStringTableMapSingleton {
-public:
-  static IntToStringTableMapSingleton& instance()
-  {
-    static IntToStringTableMapSingleton inst;
-    return inst;
-  }
-
-  bool isLoaded() const { return loaded_; }
-  void setLoaded( bool v ) { loaded_ = v; }
-
-  void insert( int key, const std::string& value ) { map_[key] = value; }
-
-  bool has( int key ) const { return map_.find( key ) != map_.end(); }
-
-  const std::string& get( int key ) const { return map_.at( key ); }
-
-  void clear() { map_.clear(); }
-
-private:
-  IntToStringTableMapSingleton() : loaded_( false ) {}
-
-  bool                                   loaded_;
-  std::unordered_map< int, std::string > map_;
-};
-
-struct ElCodeToElementTag {};
-struct MatCodeToMaterialTag {};
-
-using ElementTableMapSingleton = IntToStringTableMapSingleton< ElCodeToElementTag >;
-using MaterialTableSingleton   = IntToStringTableMapSingleton< MatCodeToMaterialTag >;
-
 namespace MainConstants {
   enum AdditionalDefinitions {
     GeostaticStressDefiniton     = 0x01 << 0,
@@ -84,6 +51,14 @@ namespace MainConstants {
                           // procedure types.
   };
 } // namespace MainConstants
+  //
+
+enum MutexIDs {
+  MutexID_ElementUelCodeSingletons = 1,
+  MutexID_ElementCache             = 2,
+};
+
+
 
 extern "C" {
 // clang-format off
@@ -127,9 +102,33 @@ void make_fstr80( char* dest, const std::string& src )
   std::memcpy( dest, src.c_str(), std::min( (size_t)80, src.size() ) );
 }
 
+
+
+
+
+std::unordered_map< int, std::unique_ptr< MarmotElement > > elementCache;
+
+class TableMap : public std::unordered_map< int, std::string >
+{
+public:
+  bool isLoaded() const
+  {
+    return loaded;
+  }
+
+  void setLoaded( bool val )
+  {
+    loaded = val;
+  }
+private:
+  bool loaded = false;
+};
+
+TableMap ElementTableMap;
+TableMap MaterialTableMap;
+
 struct AbaqusIntToStringTableReader {
-  template < typename TableTag >
-  static void readAllRowsInto( IntToStringTableMapSingleton< TableTag >& map,
+  static void readAllRowsInto( TableMap& map,
                                const std::string&                        tableCollectionName,
                                const std::string&                        tableLabel )
   {
@@ -204,7 +203,7 @@ struct AbaqusIntToStringTableReader {
       while ( !str.empty() && str.back() == ' ' )
         str.pop_back();
 
-      map.insert( key, str );
+      map[ key] =  str ;
 
       std::cout << "Loaded row " << row << ": " << key << " -> " << str << std::endl;
     }
@@ -216,33 +215,40 @@ struct AbaqusIntToStringTableReader {
   }
 };
 
-template < typename TableTag >
-void loadIntToStringParameterTableOnceAndThreadSafe( const std::string& collection, const std::string& label )
+
+void loadIntToStringParameterTableOnceAndThreadSafe( const std::string& collection, const std::string& label,
+        TableMap& map)
 {
-  auto& map = IntToStringTableMapSingleton< TableTag >::instance();
   if ( map.isLoaded() )
     return;
 
-  MutexLock( 100 );
+  MutexLock( MutexID_ElementUelCodeSingletons );
+
   if ( map.isLoaded() ) {
     /// this is just done for cosmetic reasons to avoid filling and deleting the map multiple times
-    MutexUnlock( 100 );
+    MutexUnlock( MutexID_ElementUelCodeSingletons);
     return;
   }
-  AbaqusIntToStringTableReader::readAllRowsInto< TableTag >( map, collection, label );
+  AbaqusIntToStringTableReader::readAllRowsInto( map, collection, label );
   map.setLoaded( true );
-  MutexUnlock( 100 );
+
+  MutexUnlock( MutexID_ElementUelCodeSingletons );
 }
+
+
 
 extern "C" void uexternaldb_( int* LOP, int* LRESTART, double* TIME, double* DTIME, int* KSTEP, int* KINC )
 {
   if ( *LOP == 0 || *LOP == 4 ) {
-    MutexInit( 100 );
-    MutexLock( 100 );
-    IntToStringTableMapSingleton< ElCodeToElementTag >::instance().clear();
-    IntToStringTableMapSingleton< MatCodeToMaterialTag >::instance().clear();
-    MutexUnlock( 100 );
+    MutexInit ( MutexID_ElementUelCodeSingletons );
+    MutexInit ( MutexID_ElementCache );
+
+    ElementTableMap.setLoaded( false );
+    MaterialTableMap.setLoaded( false );
+    elementCache.clear();
+
   }
+
 }
 
 // clang-format off
@@ -285,11 +291,14 @@ extern "C" void FOR_NAME(uel,UEL)(
   const double& period )
 // clang-format on
 {
-  loadIntToStringParameterTableOnceAndThreadSafe< ElCodeToElementTag >( "UEL_CODES", "UEL_ELEMENTS" );
-  loadIntToStringParameterTableOnceAndThreadSafe< MatCodeToMaterialTag >( "UEL_CODES", "UEL_MATERIALS" );
+  loadIntToStringParameterTableOnceAndThreadSafe( "UEL_CODES", "UEL_ELEMENTS", ElementTableMap );
+  loadIntToStringParameterTableOnceAndThreadSafe( "UEL_CODES", "UEL_MATERIALS", MaterialTableMap );
 
-  auto& elCodeToElName   = ElementTableMapSingleton::instance();
-  auto& matCodeToMatName = MaterialTableSingleton::instance();
+  // auto& elCodeToElName   = ElementTableMapSingleton::instance();
+  // auto& matCodeToMatName = MaterialTableSingleton::instance();
+  //
+  auto& elCodeToElName   = ElementTableMap;
+  auto& matCodeToMatName = MaterialTableMap;
 
   if ( nIntegerProperties != 5 )
     throw std::invalid_argument( MakeString() << "Marmot: insufficient integer properties (" << nIntegerProperties
@@ -305,8 +314,10 @@ extern "C" void FOR_NAME(uel,UEL)(
   const double* propertiesElement = &properties[nPropertiesUmat];
 
   // TODO: This will be obsolete once the Marmot-internal code system is abandoned
-  const auto marmotInternalElementCode = MarmotLibrary::MarmotElementFactory::getElementCodeFromName( elCodeToElName.get( elCode ) );
-  const auto marmotInternalMaterialCode  = MarmotLibrary::MarmotMaterialFactory::getMaterialCodeFromName( matCodeToMatName.get( matCode ) );
+  const auto marmotInternalElementCode = MarmotLibrary::MarmotElementFactory::getElementCodeFromName(
+    elCodeToElName.at( elCode ) );
+  const auto marmotInternalMaterialCode = MarmotLibrary::MarmotMaterialFactory::getMaterialCodeFromName(
+    matCodeToMatName.at( matCode ) );
 
   auto theElement = std::unique_ptr< MarmotElement >(
     MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber ) );
@@ -323,6 +334,33 @@ extern "C" void FOR_NAME(uel,UEL)(
     throw std::invalid_argument( MakeString() << "MarmotElement with code " << marmotInternalElementCode << " and material "
                                               << marmotInternalMaterialCode << ": insufficient stateVars (" << nStateVars
                                               << ") provided, but " << nNecessaryStateVars << " are required" );
+
+
+  // MarmotElement* theElement = nullptr;
+
+  // MutexLock( MutexID_ElementCache );
+
+  // // check if element already exists
+  // auto it = elementCache.find( elementNumber );
+  // if ( it == elementCache.end() ) {
+
+  //   // Create and insert into cache
+  //   auto newEl = std::unique_ptr< MarmotElement >(
+  //     MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber ) );
+
+  //   // assign constant data (done once)
+  //   newEl->assignNodeCoordinates( coordinates );
+  //   newEl->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+  //   newEl->assignProperty( MarmotMaterialSection( marmotInternalMaterialCode, propertiesUmat, nPropertiesUmat ) );
+
+  //   // move into cache
+  //   theElement                  = newEl.get();
+  //   elementCache[elementNumber] = std::move( newEl );
+  // }
+
+  // theElement = elementCache[elementNumber].get();
+
+  // MutexUnlock( MutexID_ElementCache );
 
   theElement->assignStateVars( stateVars, nStateVars );
 
