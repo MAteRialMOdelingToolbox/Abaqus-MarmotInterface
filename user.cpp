@@ -33,11 +33,13 @@
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 
 #include <SMAAspUserSubroutines.h>
 
+#include <map>
 #include <unordered_map>
 
 namespace MainConstants {
@@ -54,11 +56,8 @@ namespace MainConstants {
   //
 
 enum MutexIDs {
-  MutexID_UEL = 1,
-  MutexID_ElementCache             = 2,
+  MutexID_UEL          = 1,
 };
-
-
 
 extern "C" {
 // clang-format off
@@ -103,20 +102,18 @@ void make_fstr80( char* dest, const std::string& src )
 }
 
 
-std::unordered_map< int, MarmotElement* > elementCache;
 
-class TableMap : public std::unordered_map< int, std::string >
-{
+struct MarmotInfo{
+    std::string name;
+    int nProperties;
+};
+
+class TableMap : public std::unordered_map< int, MarmotInfo > {
 public:
-  bool isLoaded() const
-  {
-    return loaded;
-  }
+  bool isLoaded() const { return loaded; }
 
-  void setLoaded( bool val )
-  {
-    loaded = val;
-  }
+  void setLoaded( bool val ) { loaded = val; }
+
 private:
   bool loaded = false;
 };
@@ -124,95 +121,94 @@ private:
 TableMap ElementTableMap;
 TableMap MaterialTableMap;
 
-void readAllIntToStringRowsInto( TableMap& map,
-                               const std::string&                        tableCollectionName,
-                               const std::string&                        tableLabel )
-  {
-    char tcName[80], tblName[80];
-    make_fstr80( tcName, tableCollectionName );
-    make_fstr80( tblName, tableLabel );
+void readAllMarmotInfoInto( TableMap& map, const std::string& tableCollectionName, const std::string& tableLabel )
+{
+  char tcName[80], tblName[80];
+  make_fstr80( tcName, tableCollectionName );
+  make_fstr80( tblName, tableLabel );
 
-    int jError = 0;
+  int jError = 0;
 
-    // ---------------------------------------------------
-    // Activate table collection
-    // ---------------------------------------------------
-    settablecollection_( tcName, &jError, 80 );
-    if ( jError != 0 ) {
-      std::cout << "ERROR: Cannot activate table collection " << tableCollectionName << std::endl;
-      return;
-    }
-
-    // ---------------------------------------------------
-    // Query number of rows and parameters
-    // ---------------------------------------------------
-    int numParams = 0, numRows = 0;
-    queryparametertable_( tblName, &numParams, &numRows, &jError, 80 );
-
-    if ( jError != 0 || numRows == 0 ) {
-      std::cout << "ERROR: Cannot query parameter table " << tableLabel << std::endl;
-      return;
-    }
-
-    // ---------------------------------------------------
-    // Prepare buffers
-    // ---------------------------------------------------
-    const int maxParams   = numParams;
-    const int cParams_len = 80 * maxParams; // CRITICAL FIX
-
-    int*    iParamsDataType = new int[maxParams];
-    int*    iParams         = new int[maxParams];
-    double* rParams         = new double[maxParams];
-    char*   cParams         = new char[cParams_len];
-
-    memset( cParams, ' ', cParams_len );
-
-    map.clear();
-
-    std::cout << "Reading parameter table " << tableLabel << " with " << numRows << " rows and " << numParams
-              << " parameters per row." << std::endl;
-    // ---------------------------------------------------
-    // Loop over all rows
-    // ---------------------------------------------------
-    for ( int row = 1; row <= numRows; row++ ) {
-      getparametertablerow_( tblName,
-                             &row,
-                             &numParams,
-                             iParamsDataType,
-                             iParams,
-                             rParams,
-                             cParams,
-                             &jError,
-                             80,
-                             cParams_len );
-
-      if ( jError != 0 ) {
-        std::cout << "ERROR: getParameterTableRow failed at row " << row << std::endl;
-        continue;
-      }
-
-      // integer is param 1
-      int key = iParams[0];
-
-      // string is param 2 → index 1 → starts at offset 80*(index)
-      std::string str( cParams + 80, 80 );
-      while ( !str.empty() && str.back() == ' ' )
-        str.pop_back();
-
-      map[ key] =  str ;
-
-      std::cout << "Loaded row " << row << ": " << key << " -> " << str << std::endl;
-    }
-
-    delete[] iParamsDataType;
-    delete[] iParams;
-    delete[] rParams;
-    delete[] cParams;
+  // ---------------------------------------------------
+  // Activate table collection
+  // ---------------------------------------------------
+  settablecollection_( tcName, &jError, 80 );
+  if ( jError != 0 ) {
+    std::cout << "ERROR: Cannot activate table collection " << tableCollectionName << std::endl;
+    return;
   }
 
+  // ---------------------------------------------------
+  // Query number of rows and parameters
+  // ---------------------------------------------------
+  int numParams = 0, numRows = 0;
+  queryparametertable_( tblName, &numParams, &numRows, &jError, 80 );
 
-void loadIntToStringParameterTableOnceAndThreadSafe( const std::string& collection, const std::string& label,
-        TableMap& map)
+  if ( jError != 0 || numRows == 0 ) {
+    std::cout << "ERROR: Cannot query parameter table " << tableLabel << std::endl;
+    return;
+  }
+
+  // ---------------------------------------------------
+  // Prepare buffers
+  // ---------------------------------------------------
+  const int maxParams   = numParams;
+  const int cParams_len = 80 * maxParams; // CRITICAL FIX
+
+  int*    iParamsDataType = new int[maxParams];
+  int*    iParams         = new int[maxParams];
+  double* rParams         = new double[maxParams];
+  char*   cParams         = new char[cParams_len];
+
+  memset( cParams, ' ', cParams_len );
+
+  map.clear();
+
+  std::cout << "Reading parameter table " << tableLabel << " with " << numRows << " rows and " << numParams
+            << " parameters per row." << std::endl;
+  // ---------------------------------------------------
+  // Loop over all rows
+  // ---------------------------------------------------
+  for ( int row = 1; row <= numRows; row++ ) {
+    getparametertablerow_( tblName,
+                           &row,
+                           &numParams,
+                           iParamsDataType,
+                           iParams,
+                           rParams,
+                           cParams,
+                           &jError,
+                           80,
+                           cParams_len );
+
+    if ( jError != 0 ) {
+      std::cout << "ERROR: getParameterTableRow failed at row " << row << std::endl;
+      continue;
+    }
+
+    // integer is param 1
+    int key = iParams[0];
+    int nProperties = iParams[2];
+
+    // string is param 2 → index 1 → starts at offset 80*(index)
+    std::string str( cParams + 80, 80 );
+    while ( !str.empty() && str.back() == ' ' )
+      str.pop_back();
+
+    map[key] = MarmotInfo{ str, nProperties };
+
+    std::cout << "Loaded row " << row << ": " << key << " -> " << str << ", number of properties = " << nProperties << std::endl;
+  }
+
+  delete[] iParamsDataType;
+  delete[] iParams;
+  delete[] rParams;
+  delete[] cParams;
+}
+
+void loadIntToStringParameterTableOnceAndThreadSafe( const std::string& collection,
+                                                     const std::string& label,
+                                                     TableMap&          map )
 {
   if ( map.isLoaded() )
     return;
@@ -221,30 +217,24 @@ void loadIntToStringParameterTableOnceAndThreadSafe( const std::string& collecti
 
   if ( map.isLoaded() ) {
     /// this is just done for cosmetic reasons to avoid filling and deleting the map multiple times
-    MutexUnlock( MutexID_UEL);
+    MutexUnlock( MutexID_UEL );
     return;
   }
-  readAllIntToStringRowsInto( map, collection, label );
+  readAllMarmotInfoInto( map, collection, label );
   map.setLoaded( true );
 
   MutexUnlock( MutexID_UEL );
 }
 
-
-
 extern "C" void uexternaldb_( int* LOP, int* LRESTART, double* TIME, double* DTIME, int* KSTEP, int* KINC )
 {
-  MutexInit ( MutexID_UEL );
-  // MutexInit ( MutexID_ElementCache );
+  MutexInit( MutexID_UEL );
 
   if ( *LOP == 0 || *LOP == 4 ) {
 
     ElementTableMap.setLoaded( false );
     MaterialTableMap.setLoaded( false );
-    elementCache.clear();
-
   }
-
 }
 
 // clang-format off
@@ -293,68 +283,41 @@ extern "C" void uel_(
   const auto& elCodeToElName   = ElementTableMap;
   const auto& matCodeToMatName = MaterialTableMap;
 
-  if ( nIntegerProperties != 5 )
+  if ( nIntegerProperties <  3 )
     throw std::invalid_argument( MakeString() << "Marmot: insufficient integer properties (" << nIntegerProperties
-                                              << ") provided, but 5 are required" );
+                                              << ") provided, at least 3 are required" );
 
   const int& elCode                = integerProperties[0];
   const int& matCode               = integerProperties[1];
-  const int& nPropertiesElement    = integerProperties[2];
-  const int& nPropertiesMaterial   = integerProperties[3];
-  const int& additionalDefinitions = integerProperties[4];
+  const int& additionalDefinitions = integerProperties[2];
+
+  const int nPropertiesMaterial = matCodeToMatName.at( matCode ).nProperties; 
+  const int nPropertiesElement  = nProperties - nPropertiesMaterial;
 
   const double* propertiesMaterial = &properties[0];
   const double* propertiesElement  = &properties[nPropertiesMaterial];
 
   // TODO: This will be obsolete once the Marmot-internal code system is abandoned
-  const auto marmotInternalElementCode = MarmotLibrary::MarmotElementFactory::getElementCodeFromName(
-    elCodeToElName.at( elCode ) );
-  const auto marmotInternalMaterialCode = MarmotLibrary::MarmotMaterialFactory::getMaterialCodeFromName(
-    matCodeToMatName.at( matCode ) );
+  const auto marmotInternalElementCode = MarmotLibrary::MarmotElementFactory::getElementCodeFromName( elCodeToElName.at( elCode ).name );
+  const auto marmotInternalMaterialCode = MarmotLibrary::MarmotMaterialFactory::getMaterialCodeFromName( matCodeToMatName.at( matCode ).name );
 
-  // auto theElement = std::unique_ptr< MarmotElement >(
-  //   MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber ) );
+  auto theElement = std::unique_ptr< MarmotElement >( MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber ) );
 
-  // theElement->assignNodeCoordinates( coordinates );
+  theElement->assignNodeCoordinates( coordinates );
+  theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+  theElement->assignProperty( MarmotMaterialSection( marmotInternalMaterialCode, propertiesMaterial,
+  nPropertiesMaterial ) );
 
-  // theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+  const int nNecessaryStateVars = theElement->getNumberOfRequiredStateVars();
 
-  // theElement->assignProperty( MarmotMaterialSection( marmotInternalMaterialCode, propertiesMaterial, nPropertiesMaterial ) );
-
-  // const int nNecessaryStateVars = theElement->getNumberOfRequiredStateVars();
-
-  // if ( nNecessaryStateVars > nStateVars )
-  //   throw std::invalid_argument( MakeString() << "MarmotElement with code " << marmotInternalElementCode << " and material "
-  //                                             << marmotInternalMaterialCode << ": insufficient stateVars (" << nStateVars
-  //                                             << ") provided, but " << nNecessaryStateVars << " are required" );
-
-  MutexLock( MutexID_UEL );
-  // check if element already exists
-  if ( incrementNumber == 1 && stepNumber == 1 ){
-  auto it = elementCache.find( elementNumber );
-      if ( it == elementCache.end() ) {
-
-        // Create and insert into cache
-        elementCache[elementNumber] = MarmotLibrary::MarmotElementFactory::createElement( marmotInternalElementCode, elementNumber );
-
-        auto theElement = elementCache[elementNumber];
-        // assign constant data (done once)
-        theElement->assignNodeCoordinates( coordinates );
-        theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
-        theElement->assignProperty( MarmotMaterialSection( marmotInternalMaterialCode, propertiesMaterial, nPropertiesMaterial) );
-        theElement->assignStateVars( stateVars, nStateVars );
-        theElement->initializeYourself();
-      }
-
-  }
-
-  auto theElement = elementCache[elementNumber];
-  MutexUnlock( MutexID_UEL );
-
+  if ( nNecessaryStateVars > nStateVars )
+    throw std::invalid_argument( MakeString() << "MarmotElement with code " << marmotInternalElementCode << " and material "
+                                              << marmotInternalMaterialCode << ": insufficient stateVars (" <<
+                                              nStateVars
+                                              << ") provided, but " << nNecessaryStateVars << " are required" );
 
   theElement->assignStateVars( stateVars, nStateVars );
-
-  // theElement->initializeYourself();
+  theElement->initializeYourself();
 
   int additionalDefinitionProperties = 0;
   if ( additionalDefinitions & MainConstants::AdditionalDefinitions::GeostaticStressDefiniton ) {
@@ -370,17 +333,8 @@ extern "C" void uel_(
     theElement->setInitialConditions( MarmotElement::MarmotMaterialInitialization, nullptr );
   }
 
-  // compute K and P
   theElement->computeYourself( U, dU, rightHandSide, KMatrix, time, dTime, pNewDT );
 
-
-
-  //// compute distributed loads in nodal forces and add it to P
-  // for (int i =0; i<mDload; i++){
-  // if ([i]<1.e-16)
-  // continue;
-  // theElement->computeDistributedLoad(MarmotElement::Pressure, rightHandSide, distributedLoadTypes[i],
-  // &distributedLoadMags[i], time, dTime);}
 }
 
 // clang-format off
