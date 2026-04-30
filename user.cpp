@@ -28,17 +28,22 @@
 #include "Marmot/MarmotElementProperty.h"
 #include "Marmot/MarmotMaterialHypoElasticFactory.h"
 #include <aba_for_c.h>
+#include <SMAAspUserSubroutines.h>
+
+#include <Eigen/Dense>
+
 #include <cstring>
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <sstream>
 #include <string>
-
-#include <SMAAspUserSubroutines.h>
-
-#include <map>
+#include <string_view>
+#include <format>
+#include <vector>
+#include <ranges>
+#include <algorithm>
 #include <unordered_map>
+#include <stdexcept>
 
 namespace MainConstants {
   enum AdditionalDefinitions {
@@ -47,11 +52,9 @@ namespace MainConstants {
   };
 
   enum UelFlags1 {
-    GeostaticStress = 61, // Geostatic stress field according to Abaqus Analysis User's Guide Tab. 5.1.2-1 Keys to //
-                          // procedure types.
+    GeostaticStress = 61, // Geostatic stress field according to Abaqus Analysis User's Guide Tab. 5.1.2-1 Keys to procedure types.
   };
 } // namespace MainConstants
-  //
 
 enum MutexIDs {
   MutexID_UEL = 1,
@@ -72,6 +75,7 @@ void FOR_NAME(stdb_abqerr,STDB_ABQERR)
 void FOR_NAME(xit,XIT)();
 // clang-format on
 }
+
 extern "C" {
 void settablecollection_( char* tcName, int* jError, int tcName_len );
 
@@ -93,31 +97,49 @@ void getparametertablerow_( char*   parameterTableLabel,
                             int     cParams_len );
 }
 
-void make_fstr80( char* dest, const std::string& src )
-{
-  std::memset( dest, ' ', 80 );
-  std::memcpy( dest, src.c_str(), std::min( (size_t)80, src.size() ) );
+// C++23 String helper for 80-char Fortran buffers
+void make_fstr80(char* dest, std::string_view src) {
+    std::ranges::fill(dest, dest + 80, ' ');
+    std::ranges::copy(src.substr(0, std::min<size_t>(80, src.size())), dest);
 }
 
+// Modernized TableMap using composition to avoid std container inheritance issues
 struct MarmotInfo {
   std::string name;
   int         nProperties;
 };
 
-class TableMap : public std::unordered_map< int, MarmotInfo > {
+class TableMap {
 public:
-  bool isLoaded() const { return loaded; }
+  [[nodiscard]] bool isLoaded() const noexcept { return loaded; }
+  void setLoaded(bool val) noexcept { loaded = val; }
 
-  void setLoaded( bool val ) { loaded = val; }
+  MarmotInfo& operator[](int key) { return data[key]; }
+  const MarmotInfo& at(int key) const { return data.at(key); }
+  void clear() { data.clear(); }
 
 private:
   bool loaded = false;
+  std::unordered_map<int, MarmotInfo> data;
 };
 
 TableMap ElementTableMap;
 TableMap MaterialTableMap;
 
-void readAllMarmotInfoInto( TableMap& map, const std::string& tableCollectionName, const std::string& tableLabel )
+// RAII Wrapper for Abaqus Mutex to guarantee exception safety
+class AbaqusScopedLock {
+public:
+    explicit AbaqusScopedLock(int mutexId) : id(mutexId) { MutexLock(id); }
+    ~AbaqusScopedLock() { MutexUnlock(id); }
+    
+    // Prevent copying
+    AbaqusScopedLock(const AbaqusScopedLock&) = delete;
+    AbaqusScopedLock& operator=(const AbaqusScopedLock&) = delete;
+private:
+    int id;
+};
+
+void readAllMarmotInfoInto( TableMap& map, std::string_view tableCollectionName, std::string_view tableLabel )
 {
   char tcName[80], tblName[80];
   make_fstr80( tcName, tableCollectionName );
@@ -130,7 +152,7 @@ void readAllMarmotInfoInto( TableMap& map, const std::string& tableCollectionNam
   // ---------------------------------------------------
   settablecollection_( tcName, &jError, 80 );
   if ( jError != 0 ) {
-    std::cout << "ERROR: Cannot activate table collection " << tableCollectionName << std::endl;
+    std::cout << std::format("ERROR: Cannot activate table collection {}\n", tableCollectionName);
     return;
   }
 
@@ -141,27 +163,26 @@ void readAllMarmotInfoInto( TableMap& map, const std::string& tableCollectionNam
   queryparametertable_( tblName, &numParams, &numRows, &jError, 80 );
 
   if ( jError != 0 || numRows == 0 ) {
-    std::cout << "ERROR: Cannot query parameter table " << tableLabel << std::endl;
+    std::cout << std::format("ERROR: Cannot query parameter table {}\n", tableLabel);
     return;
   }
 
   // ---------------------------------------------------
-  // Prepare buffers
+  // Prepare buffers safely with std::vector (RAII)
   // ---------------------------------------------------
   const int maxParams   = numParams;
-  const int cParams_len = 80 * maxParams; // CRITICAL FIX
+  const int cParams_len = 80 * maxParams;
 
-  int*    iParamsDataType = new int[maxParams];
-  int*    iParams         = new int[maxParams];
-  double* rParams         = new double[maxParams];
-  char*   cParams         = new char[cParams_len];
-
-  memset( cParams, ' ', cParams_len );
+  std::vector<int>    iParamsDataType(maxParams);
+  std::vector<int>    iParams(maxParams);
+  std::vector<double> rParams(maxParams);
+  std::string         cParams(cParams_len, ' '); // initializes directly with spaces
 
   map.clear();
 
-  std::cout << "Reading parameter table " << tableLabel << " with " << numRows << " rows and " << numParams
-            << " parameters per row." << std::endl;
+  std::cout << std::format("Reading parameter table {} with {} rows and {} parameters per row.\n", 
+                           tableLabel, numRows, numParams);
+
   // ---------------------------------------------------
   // Loop over all rows
   // ---------------------------------------------------
@@ -169,16 +190,16 @@ void readAllMarmotInfoInto( TableMap& map, const std::string& tableCollectionNam
     getparametertablerow_( tblName,
                            &row,
                            &numParams,
-                           iParamsDataType,
-                           iParams,
-                           rParams,
-                           cParams,
+                           iParamsDataType.data(),
+                           iParams.data(),
+                           rParams.data(),
+                           cParams.data(),
                            &jError,
                            80,
                            cParams_len );
 
     if ( jError != 0 ) {
-      std::cout << "ERROR: getParameterTableRow failed at row " << row << std::endl;
+      std::cout << std::format("ERROR: getParameterTableRow failed at row {}\n", row);
       continue;
     }
 
@@ -186,41 +207,33 @@ void readAllMarmotInfoInto( TableMap& map, const std::string& tableCollectionNam
     int key         = iParams[0];
     int nProperties = iParams[2];
 
-    // string is param 2 → index 1 → starts at offset 80*(index)
-    std::string str( cParams + 80, 80 );
-    while ( !str.empty() && str.back() == ' ' )
-      str.pop_back();
+    // string is param 2 → index 1 → starts at offset 80*(index). Zero-allocation trim.
+    std::string_view strView(cParams.data() + 80, 80);
+    auto lastChar = strView.find_last_not_of(' ');
+    std::string str = (lastChar == std::string_view::npos) ? "" : std::string(strView.substr(0, lastChar + 1));
 
     map[key] = MarmotInfo{ str, nProperties };
 
-    std::cout << "Loaded row " << row << ": " << key << " -> " << str << ", number of properties = " << nProperties
-              << std::endl;
+    std::cout << std::format("Loaded row {}: {} -> {}, number of properties = {}\n", 
+                             row, key, str, nProperties);
   }
-
-  delete[] iParamsDataType;
-  delete[] iParams;
-  delete[] rParams;
-  delete[] cParams;
 }
 
-void loadIntToStringParameterTableOnceAndThreadSafe( const std::string& collection,
-                                                     const std::string& label,
-                                                     TableMap&          map )
+void loadIntToStringParameterTableOnceAndThreadSafe( std::string_view collection,
+                                                     std::string_view label,
+                                                     TableMap&        map )
 {
   if ( map.isLoaded() )
     return;
 
-  MutexLock( MutexID_UEL );
+  AbaqusScopedLock lock(MutexID_UEL);
 
   if ( map.isLoaded() ) {
-    /// this is just done for cosmetic reasons to avoid filling and deleting the map multiple times
-    MutexUnlock( MutexID_UEL );
     return;
   }
+  
   readAllMarmotInfoInto( map, collection, label );
   map.setLoaded( true );
-
-  MutexUnlock( MutexID_UEL );
 }
 
 extern "C" void uexternaldb_( int* LOP, int* LRESTART, double* TIME, double* DTIME, int* KSTEP, int* KINC )
@@ -228,7 +241,6 @@ extern "C" void uexternaldb_( int* LOP, int* LRESTART, double* TIME, double* DTI
   MutexInit( MutexID_UEL );
 
   if ( *LOP == 0 || *LOP == 4 ) {
-
     ElementTableMap.setLoaded( false );
     MaterialTableMap.setLoaded( false );
   }
@@ -239,38 +251,38 @@ extern "C" void uel_(
   double rightHandSide[/*lVarx , nRightHandSide*/], // right hand side load vector(s) 1: common, 2: additional for RIKS (see documentation)
   double KMatrix[/*nDof * nDof*/],                  // stiffness matrix
   double stateVars[], // solution dependent state variables; passed in values @ beginning of increment -> set to values @ end of increment
-  double        energies[8], // may be updated: energies
-  const int&    nDegreesOfFreedom,
-  const int&    nRightHandSide,
-  const int&    nStateVars,
-  const double  properties[/*nProperties*/],
-  const int&    nProperties,
-  const double  coordinates[/*mcrd, nNodes*/], // undeformed coordinates of the node respective DOFs
-  const int&    maxNCoords,                    // max number of coordinates (see documentation)
-  const int&    nNodes,
-  const double  U[/*nDof*/],                            // current solution (end of increment)
-  const double  dU[/*mlvarx=nDof(?), nRightHandSide*/], // increment of solutions
-  const double  UDot[/*nDof*/],                         // first derivative (velocity..)
-  const double  UDotDot[/*nDof*/],                      // second derivative (acceleration..)
-  const int&    elementType,                            // user defined element type id
-  const double  time[2],                                // 1: time of step, 2: total time
+  double       energies[8], // may be updated: energies
+  const int&   nDegreesOfFreedom,
+  const int&   nRightHandSide,
+  const int&   nStateVars,
+  const double properties[/*nProperties*/],
+  const int&   nProperties,
+  const double coordinates[/*mcrd, nNodes*/], // undeformed coordinates of the node respective DOFs
+  const int&   maxNCoords,                    // max number of coordinates (see documentation)
+  const int&   nNodes,
+  const double U[/*nDof*/],                             // current solution (end of increment)
+  const double dU[/*mlvarx=nDof(?), nRightHandSide*/], // increment of solutions
+  const double UDot[/*nDof*/],                          // first derivative (velocity..)
+  const double UDotDot[/*nDof*/],                       // second derivative (acceleration..)
+  const int&   elementType,                             // user defined element type id
+  const double time[2],                                 // 1: time of step, 2: total time
   const double& dTime,                                  // time increment
-  const int&    stepNumber,
-  const int&    incrementNumber,
-  const int&    elementNumber,
-  const double  solutionParams[],                  // solution procedure dependent parameters
-  const int&    nDLoadActive,                      // id of load / flux currently active on this element
+  const int&   stepNumber,
+  const int&   incrementNumber,
+  const int&   elementNumber,
+  const double solutionParams[],                   // solution procedure dependent parameters
+  const int&   nDLoadActive,                       // id of load / flux currently active on this element
   const int distributedLoadTypes[/*mDLoads, * */], // An array containing the integers used to define distributed load types for the element.
-  const double  distributedLoadMags[/*mDloads, * */], // magnitudes @ end of increment
-  const double  Predef[/*nPredef*/],
-  const int&    nPredef,
-  const int     lFlags[],
-  const int     mlvarx[],
-  const double  dDistributedLoadMags[/*mDloads, * */], // increment of magnitudes
-  const int&    mDload, // total number of distributed loads and fluxes defined on this element
-  double&       pNewDT,
-  const int     integerProperties[],
-  const int&    nIntegerProperties,
+  const double distributedLoadMags[/*mDloads, * */], // magnitudes @ end of increment
+  const double Predef[/*nPredef*/],
+  const int&   nPredef,
+  const int    lFlags[],
+  const int    mlvarx[],
+  const double dDistributedLoadMags[/*mDloads, * */], // increment of magnitudes
+  const int&   mDload, // total number of distributed loads and fluxes defined on this element
+  double&      pNewDT,
+  const int    integerProperties[],
+  const int&   nIntegerProperties,
   const double& period )
 // clang-format on
 {
@@ -281,8 +293,7 @@ extern "C" void uel_(
   const auto& matCodeToMatName = MaterialTableMap;
 
   if ( nIntegerProperties < 3 )
-    throw std::invalid_argument( MakeString() << "Marmot: insufficient integer properties (" << nIntegerProperties
-                                              << ") provided, at least 3 are required" );
+    throw std::invalid_argument( std::format("Marmot: insufficient integer properties ({}) provided, at least 3 are required", nIntegerProperties) );
 
   const int& elCode                = integerProperties[0];
   const int& matCode               = integerProperties[1];
@@ -305,10 +316,9 @@ extern "C" void uel_(
   const int nNecessaryStateVars = theElement->getNumberOfRequiredStateVars();
 
   if ( nNecessaryStateVars > nStateVars )
-    throw std::invalid_argument( MakeString()
-                                 << "MarmotElement " << elCodeToElName.at( elCode ).name << " and material "
-                                 << matCodeToMatName.at( matCode ).name << ": insufficient stateVars (" << nStateVars
-                                 << ") provided, but " << nNecessaryStateVars << " are required" );
+    throw std::invalid_argument( std::format(
+        "MarmotElement {} and material {}: insufficient stateVars ({}) provided, but {} are required",
+        elCodeToElName.at(elCode).name, matCodeToMatName.at(matCode).name, nStateVars, nNecessaryStateVars) );
 
   theElement->assignStateVars( stateVars, nStateVars );
   theElement->initializeYourself();
@@ -352,17 +362,17 @@ extern "C" void FOR_NAME(umat,UMAT)(
   const double  preDef[],   // array of interpolated values of predefined field variables @ this point @ start of inc., based on values read in nodes
   const double dPreDef[],   // array of inc. of pre. def. field variables
   const char   matName[80], // user defined material name, attention: If Intel Compiler is used, matNameLength *may* be passed directly after this argument
-  const int&              nDirect,    // number of direct stress components @ this point
-  const int&              nShear,     // number of engineering shear stress components @ this point
-  const int&              nTensor,    // size of stress and strain component array (nDirect + nShear)
-  const int&              nStateVars, // number of solution dependent state variables associated with this mat. type
-  const double            materialProperties[], // user def. array of mat. constants associated with this material
-  const int&              nMaterialProperties,  // number of user def. variables
-  const double            coords[3],            // coordinates of this point
-  const double            dRot[9],              // rotation increment matrix 3x3
+  const int&             nDirect,    // number of direct stress components @ this point
+  const int&             nShear,     // number of engineering shear stress components @ this point
+  const int&             nTensor,    // size of stress and strain component array (nDirect + nShear)
+  const int&             nStateVars, // number of solution dependent state variables associated with this mat. type
+  const double           materialProperties[], // user def. array of mat. constants associated with this material
+  const int&             nMaterialProperties,  // number of user def. variables
+  const double           coords[3],            // coordinates of this point
+  const double           dRot[9],              // rotation increment matrix 3x3
   /*may be def.*/ double& pNewDT,               // propagation for new time increment
   const double&           charElemLength,       // characteristic element Length
-  const double            dfGrd0[9],            // deformation gradient @ beginning of increment      3x3 |
+  const double           dfGrd0[9],            // deformation gradient @ beginning of increment     3x3 |
   const double dfGrd1[9], // deformation gradient @ end of increment            3x3 |--> always stored as 3D-matrix
   const int&   noEl,      // element number
   const int&   nPt,       // integration Point number
@@ -375,24 +385,23 @@ extern "C" void FOR_NAME(umat,UMAT)(
 )
 // clang-format on
 {
-
-  const std::string materialName( matName );
-  const std::string strippedName = materialName.substr( 0, materialName.find_first_of( ' ' ) )
-                                     .substr( 0, materialName.find_first_of( '-' ) );
+  // Zero-allocation parsing
+  std::string_view matNameView( matName, 80 );
+  auto endPos = std::min(matNameView.find(' '), matNameView.find('-'));
+  std::string strippedName(matNameView.substr(0, endPos));
 
   auto material = std::unique_ptr< MarmotMaterialHypoElastic >(
       MarmotLibrary::MarmotMaterialHypoElasticFactory::createMaterial( strippedName,
-                                                                                   materialProperties,
-                                                                                   nMaterialProperties,
-                                                                                   noEl ) );
+                                                                       materialProperties,
+                                                                       nMaterialProperties,
+                                                                       noEl ) );
 
   const int nStateVarsForUmat = nStateVars;
 
   if ( material->getNumberOfRequiredStateVars() > nStateVarsForUmat ) {
-    const std::string materialName( matName );
-    throw std::invalid_argument( MakeString()
-                                 << "MarmotMaterial " << strippedName << ": insufficient stateVars (" << nStateVars
-                                 << ") provided, but " << material->getNumberOfRequiredStateVars() << " are required" );
+    throw std::invalid_argument( std::format(
+        "MarmotMaterial {}: insufficient stateVars ({}) provided, but {} are required",
+        strippedName, nStateVars, material->getNumberOfRequiredStateVars()) );
   }
 
   material->setCharacteristicElementLength( charElemLength );
@@ -402,66 +411,79 @@ extern "C" void FOR_NAME(umat,UMAT)(
   ti.time = time[1]; // Total time at beginning of increment
   ti.dT   = dtime;   // Time increment
 
-  // call material
   if ( nDirect == 3 ) {
-    // either 3D, plane strain or axisymmetric case
-    double dStrain6[6]           = {};
-    double dStress_dStrain66[36] = {};
+    // Map Abaqus raw pointers directly to Eigen types (Zero-copy, Column-Major)
+    Eigen::Map<Eigen::VectorXd>       abqStress(stress, nTensor);
+    Eigen::Map<const Eigen::VectorXd> abqDStrain(dStrain, nTensor);
+    Eigen::Map<Eigen::MatrixXd>       abqDStressDStrain(dStress_dStrain, nTensor, nTensor);
 
-    int abq2voigt[nTensor];
-    for ( int i = 0; i < nDirect; i++ )
-      abq2voigt[i] = i;
-    for ( int i = 0; i < nShear; i++ )
-      abq2voigt[nDirect + i] = 3 + i;
+    // Initialize 6x6 and 6x1 Eigen containers for the material library
+    Eigen::Matrix<double, 6, 6> dStress_dStrain66 = Eigen::Matrix<double, 6, 6>::Zero();
+    Eigen::Vector<double, 6>    dStrain6          = Eigen::Vector<double, 6>::Zero();
+
+    std::vector<int> abq2voigt(nTensor);
+    for ( int i = 0; i < nDirect; i++ ) abq2voigt[i] = i;
+    for ( int i = 0; i < nShear; i++ )  abq2voigt[nDirect + i] = 3 + i;
 
     // Set up the 3D state struct
     MarmotMaterialHypoElastic::state3D state;
     state.stateVars           = stateVars;
     state.strainEnergyDensity = sSE;
-    for ( int i = 0; i < 6; i++ )
-      state.stress[i] = 0.0; // Ensure safe initialization
+    state.stress.setZero(); 
 
-    // expand Voigt
+    // Expand Voigt notation
     for ( int i = 0; i < nTensor; i++ ) {
-      state.stress[abq2voigt[i]] = stress[i];
-      dStrain6[abq2voigt[i]]     = dStrain[i];
+      state.stress(abq2voigt[i]) = abqStress(i);
+      dStrain6(abq2voigt[i])     = abqDStrain(i);
     }
 
     // Call the updated compute function
-    material->computeStress( state, dStress_dStrain66, dStrain6, ti );
+    material->computeStress( state, dStress_dStrain66.data(), dStrain6.data(), ti );
 
     // Update specific elastic strain energy
     sSE = state.strainEnergyDensity;
 
-    // condense Voigt
+    // Condense Voigt notation
     for ( int i = 0; i < nTensor; i++ ) {
-      stress[i] = state.stress[abq2voigt[i]];
-      for ( int j = 0; j < nTensor; j++ )
-        dStress_dStrain[nTensor * i + j] = dStress_dStrain66[6 * abq2voigt[i] + abq2voigt[j]];
+      abqStress(i) = state.stress(abq2voigt[i]);
+      for ( int j = 0; j < nTensor; j++ ) {
+        abqDStressDStrain(i, j) = dStress_dStrain66(abq2voigt[i], abq2voigt[j]);
+      }
     }
   }
   else if ( nDirect == 2 ) {
+    Eigen::Map<Eigen::MatrixXd> abqDStressDStrain(dStress_dStrain, nTensor, nTensor);
+
     // Set up the 2D state struct
     MarmotMaterialHypoElastic::state2D state;
     state.stateVars           = stateVars;
     state.strainEnergyDensity = sSE;
-    for ( int i = 0; i < nTensor; i++ )
-      state.stress[i] = stress[i];
+    
+    // Safest way to populate a fixed-size vector from a runtime-sized pointer
+    for (int i = 0; i < nTensor; i++) {
+        state.stress(i) = stress[i];
+    }
 
-    material->computePlaneStress( state, dStress_dStrain, dStrain, ti );
+    material->computePlaneStress( state, abqDStressDStrain.data(), dStrain, ti );
 
     sSE = state.strainEnergyDensity;
-    for ( int i = 0; i < nTensor; i++ )
-      stress[i] = state.stress[i];
+    
+    // Write back to Abaqus array
+    for (int i = 0; i < nTensor; i++) {
+        stress[i] = state.stress(i);
+    }
   }
   else if ( nDirect == 1 ) {
+    Eigen::Map<Eigen::MatrixXd> abqDStressDStrain(dStress_dStrain, 1, 1);
+
     // Set up the 1D state struct
     MarmotMaterialHypoElastic::state1D state;
     state.stateVars           = stateVars;
     state.strainEnergyDensity = sSE;
-    state.stress              = stress[0];
+    
+    state.stress = stress[0]; 
 
-    material->computeUniaxialStress( state, dStress_dStrain, dStrain, ti );
+    material->computeUniaxialStress( state, abqDStressDStrain.data(), dStrain, ti );
 
     sSE       = state.strainEnergyDensity;
     stress[0] = state.stress;
