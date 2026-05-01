@@ -1,0 +1,94 @@
+** This is the UEL defitinition. It defines the number of nodes, the degree of freedom,
+** the number of properties and the number of variables. 
+** It does not say anything about the actual properties which are defined in the UEL property section.
+** The name U020 is abitrary, it can be any U + four digit number.
+** variables  8 [qps] * ( 1 [GCDP sdv] + 6 [stress] + 6 [strain] ) = 104 in total
+*USER ELEMENT, UNSYMM, TYPE=U020, NODES=20, COORDINATES=3, PROPERTIES=8, VARIABLES=104, I PROPERTIES=3
+1,2,3
+2,1,2,3
+3,1,2,3
+4,1,2,3
+5,1,2,3
+6,1,2,3
+7,1,2,3
+8,1,2,3
+9,1,2,3
+10,1,2,3
+11,1,2,3
+12,1,2,3
+13,1,2,3
+14,1,2,3
+15,1,2,3
+16,1,2,3
+17,1,2,3
+18,1,2,3
+19,1,2,3
+20,1,2,3
+** Here we define the UEL property for an actual section/elset.
+*include, input=mesh.inp
+*PARAMETER TABLE TYPE, NAME=int_string_int, PARAMETERS=3
+INTEGER                    
+STRING                                                                       
+INTEGER
+*TABLE COLLECTION, NAME=UEL_CODES
+*PARAMETER TABLE, TYPE=int_string_int, LABEL=UEL_ELEMENTS
+**el-code,  Marmot el-name, number of properties
+100,        C3D20R,        0
+*PARAMETER TABLE, TYPE=int_string_int, LABEL=UEL_MATERIALS
+**mat-code, Marmot mt-name, number of properties
+999,        VonMises,       6 
+** 
+*UEL PROPERTY, ELSET=concrete                                                
+** ALWAYS EXACTLY 8 PARAMETERS PER LINE!
+** First are the material (GCDP) properties, then the element properties (none in this case)
+****1****,  ****2****,  ****3****,  ****4****,  ****5****,  ****6****,  ****7****,  ****8****,  
+**E         nu          fcy         Hlin,       dExpHard,   delta,      UNUSED,     UNUSED,
+25850,      0.18,       10.33,      1000,         0,          0,          0,          0
+**
+** INTEGER PROPERTIES come always after the real (float) properties
+**    
+** el-code, mat-code, additional definitions (geostatic, material initialization, ...)
+100,   999, 0
+*Material, name=LinearElastic
+*Depvar
+1
+*User Material, unsymm, Constants=2
+25850, 0.18
+*solid section, elset=reinforced_concrete, material=LinearElastic
+*solid section, elset=reinforced_concrete_2, material=LinearElastic
+** BOUNDARY CONDITIONS
+** 
+** Name: bcBottom Type: Displacement/Rotation
+*Boundary
+nset_bottom, 1, 1
+nset_bottom, 2, 2
+nset_back, 3, 3
+** Name: bcLoad Type: Displacement/Rotation
+*Boundary
+nset_load_application, 2, 2
+** ----------------------------------------------------------------
+** 
+** STEP: stepLoad
+** 
+*Step, name=stepLoad, inc=1000
+*Static
+0.01, 1., 1e-05, 0.01
+** 
+** BOUNDARY CONDITIONS
+** 
+** Name: bcLoad Type: Displacement/Rotation
+*Boundary, type=displacement
+nset_load_application, 2, 2, 25.0
+** 
+** OUTPUT REQUESTS
+** 
+** .fil files are huge, so we only write as few as possible
+*node file, frequency=10
+U
+*node file, frequency=10, nset=nset_bottom
+RF
+*el file, elset=reinforced_concrete, frequency=10
+S, E, 
+*el file, elset=concrete, frequency=10
+SDV
+*End Step
