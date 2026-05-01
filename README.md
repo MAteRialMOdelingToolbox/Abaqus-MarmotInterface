@@ -17,7 +17,7 @@ To make the interface compatible with older versions of Abaqus, change all `FOR_
 ## How to define a User Material (UMAT) from Marmot
 
 A Marmot material (when used with standard Abaqus elements) is defined as follows in your `.inp`-file. For the sake of simplicity, a `LinearElastic` material model from Marmot is used here.
-
+```abaqus
 ** name ... name of your user-material (not case sensitive, since the Abaqus 
 **          input reader is not); if you have multiple sets of properties just
 **          add -1, -2 as a suffix, e.g., LinearElastic-1, LinearElastic-2
@@ -46,6 +46,7 @@ A Marmot material (when used with standard Abaqus elements) is defined as follow
 **
 ** E      nu
 25850, 0.18
+```
 
 ---
 
@@ -55,7 +56,7 @@ Using a Marmot finite element requires a specific workflow because the C++ inter
 
 ### 1. Define the Parameter Tables
 At the model level, define a `TABLE COLLECTION` that maps your arbitrary integer codes to Marmot's internal C++ class names and property counts. 
-
+```abaqus
 ** Define the schema for our mapping table: ID (int), Name (string), nProps (int)
 *PARAMETER TABLE TYPE, NAME=int_string_int, PARAMETERS=3
 INTEGER                    
@@ -74,10 +75,12 @@ INTEGER
 *PARAMETER TABLE, TYPE=int_string_int, LABEL=UEL_MATERIALS
 ** mat-code, Marmot mat-name, number of material properties
 999,         VonMises,        6 
+```
 
 ### 2. Define the User Element (`*USER ELEMENT`)
 This block defines the topology and variable sizes for the UEL. Note that it does *not* assign actual material values yet.
 
+```abaqus
 ** TYPE: The name must be 'U' followed by a number (e.g., U020).
 ** VARIABLES: Must equal the total number of state variables across all integration points.
 **            Example: 8 IPs * (1 GCDP sdv + 6 stress + 6 strain) = 104 in total.
@@ -103,6 +106,7 @@ This block defines the topology and variable sizes for the UEL. Note that it doe
 18,1,2,3
 19,1,2,3
 20,1,2,3
+```
 
 ### 3. Assign the UEL Properties (`*UEL PROPERTY`)
 Finally, assign the properties to an element set. Real properties are defined first, followed by the integer properties.
@@ -113,7 +117,7 @@ Finally, assign the properties to an element set. Real properties are defined fi
 1. Element Code (matches `UEL_ELEMENTS` table)
 2. Material Code (matches `UEL_MATERIALS` table)
 3. Additional Definitions Flag (Bitwise flag: `0` = None, `1` = Geostatic Stress, `2` = Marmot Initialization, `3` = Both).
-
+```abaqus
 *UEL PROPERTY, ELSET=concrete                                                
 ** ALWAYS EXACTLY 8 PARAMETERS PER LINE!
 ** First are the material properties (e.g., GCDP), then the element properties.
@@ -124,3 +128,4 @@ Finally, assign the properties to an element set. Real properties are defined fi
 ** INTEGER PROPERTIES come always after the real (float) properties
 ** el-code, mat-code, additional definitions flag
 100,        999,      0
+```
