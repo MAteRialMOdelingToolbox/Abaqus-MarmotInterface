@@ -1,0 +1,50 @@
+** We have a UEL, which has 20 nodes with displacement and nonlocal damage DOFs,
+*defineElementType, element=U020, shape=hexa20
+** .. and a standard Abaqus C3D20R, which also has also 20 nodes
+*defineElementType, element=C3D20R, shape=hexa20
+**
+** NODAL VARIABLES
+**
+*ensightPerNodeVariableJob,   name=node_displacements, dimensions=3
+*ensightPerNodeVariableJobEntry, job=node_displacements,  set=CONCRETE, result=U
+*ensightPerNodeVariableJobEntry, job=node_displacements,  set=REINFORCED_CONCRETE, result=U
+*ensightPerNodeVariableJobEntry, job=node_displacements,  set=REINFORCED_CONCRETE_2, result=U
+
+** reaction forces are written only at the boundary, so we either need to specificy that all missing values at interior nodes are zerod ...
+*ensightPerNodeVariableJob, name=node_reaction_forces, dimensions=3, 
+*ensightPerNodeVariableJobEntry, setType=nSet, set=NSET_BOTTOM, job=node_reaction_forces, result=RF
+**
+**
+** ELEMENTAL VARIABLES
+**
+** convert the UEL SDVs (which contain material SDVs + stresses and strains). 
+** we need to define the periodical pattern of 8 gauss points within the SDVs, seperated by a data distance of 13, and with an initial offset of 0
+** of course, this is dependent on the UEL!
+**
+** assumed layout of the SDV vector per UEL:
+** [ [ qpInitialOffset ... ] [ DATA of QP1 ...  qpDistance -> ] [ DATA of QP 2 ... qpDistance -> ] ]
+
+*UELSDVToQuadraturePoints, set=CONCRETE, destination=ConcUelSDVs, qpCount=8, qpInitialOffset=0, qpDistance=13
+
+** furthermore, we may want to compute the average over all SDVs
+*computeAverageOverQuadraturePoints, set=CONCRETE, result=ConcUelSDVs
+**
+** Scalar Variables are accessed in the SDV field by means of their index ....
+*ensightPerElementVariableJob, name=alphaP, dimensions=1
+*ensightPerElementVariableJobEntry, set=CONCRETE, job=alphaP, result=ConcUelSDVs, location=computed, which=average,  values=12
+
+** We export our stresses and strains using Voigt notation ...
+*ensightPerElementVariableJob, name=el_stress, dimensions=6
+*ensightPerElementVariableJob, name=el_strain, dimensions=6
+** and for illustrative purposes also using the 3x3 tensor notation!
+
+** ... For UELS, we access those quantities within the SDVs usingof a python slice (of course we have to know where those variables are located in the SDVs)!
+*ensightPerElementVariableJobEntry, set=CONCRETE, job=el_stress, result=ConcUelSDVs, location=computed, which=average,  values=0:6
+*ensightPerElementVariableJobEntry, set=CONCRETE, job=el_strain, result=ConcUelSDVs, location=computed, which=average,  values=6:12
+** ... and for the 3x3 tensor notation (note that we account for factor two on shear strain terms):
+**
+*computeAverageOverQuadraturePoints, set=REINFORCED_CONCRETE, result=S
+*computeAverageOverQuadraturePoints, set=REINFORCED_CONCRETE, result=E
+
+*ensightPerElementVariableJobEntry, set=REINFORCED_CONCRETE,   job=el_stress, result=S, location=computed, which=average
+*ensightPerElementVariableJobEntry, set=REINFORCED_CONCRETE,   job=el_strain, result=E, location=computed, which=average
