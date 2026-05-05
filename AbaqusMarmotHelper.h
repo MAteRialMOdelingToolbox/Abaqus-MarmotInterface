@@ -24,19 +24,19 @@
  */
 #pragma once
 
-#include <aba_for_c.h>
 #include <SMAAspUserSubroutines.h>
+#include <aba_for_c.h>
 
+#include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <format>
+#include <ranges>
+#include <stdexcept>
 #include <string>
 #include <string_view>
-#include <format>
-#include <vector>
-#include <ranges>
-#include <algorithm>
 #include <unordered_map>
-#include <stdexcept>
-#include <cstdint>
+#include <vector>
 
 // Global constant for Fortran string buffers
 constexpr size_t AbqStringLen = 80;
@@ -80,17 +80,18 @@ namespace MainConstants {
   };
 
   // Helper for clean bitwise checking
-  [[nodiscard]] constexpr bool hasFlag(uint32_t bitmask, AdditionalDefinitions flag) noexcept {
-    return (bitmask & static_cast<uint32_t>(flag)) != 0;
+  [[nodiscard]] constexpr bool hasFlag( uint32_t bitmask, AdditionalDefinitions flag ) noexcept
+  {
+    return ( bitmask & static_cast< uint32_t >( flag ) ) != 0;
   }
 
   enum UelFlags1 {
-    GeostaticStress = 61, 
+    GeostaticStress = 61,
   };
 } // namespace MainConstants
 
 enum MutexIDs {
-  MutexID_UEL = 1,
+  MutexID_UEL   = 1,
   MutexID_VUMAT = 2, // Added for future Explicit expansion
 };
 
@@ -132,9 +133,10 @@ void getparametertablerow_( char*   parameterTableLabel,
 // ALL functions below must be marked 'inline' to prevent multiple definition linker errors
 
 // C++23 String helper for 80-char Fortran buffers
-inline void make_fstr80(char* dest, std::string_view src) {
-    std::ranges::fill(dest, dest + AbqStringLen, ' ');
-    std::ranges::copy(src.substr(0, std::min<size_t>(AbqStringLen, src.size())), dest);
+inline void make_fstr80( char* dest, std::string_view src )
+{
+  std::ranges::fill( dest, dest + AbqStringLen, ' ' );
+  std::ranges::copy( src.substr( 0, std::min< size_t >( AbqStringLen, src.size() ) ), dest );
 }
 
 /**
@@ -144,27 +146,27 @@ inline void make_fstr80(char* dest, std::string_view src) {
  * LOP = -2: Error message (continue)
  * LOP = -3: Error message (stop immediately)
  */
-inline void printAbaqusMessage(std::string_view msg, int lop) {
-    int dummyInt = 0;
-    double dummyReal = 0.0;
-    
-    // Truncate to Abaqus's 500 character limit to prevent buffer overflows
-    std::string msgStr = std::string(msg.substr(0, 500)); 
-    
-    FOR_NAME(stdb_abqerr,STDB_ABQERR)(
-        &lop, msgStr.c_str(), &dummyInt, &dummyReal, "", msgStr.length(), 0);
+inline void printAbaqusMessage( std::string_view msg, int lop )
+{
+  int    dummyInt  = 0;
+  double dummyReal = 0.0;
+
+  // Truncate to Abaqus's 500 character limit to prevent buffer overflows
+  std::string msgStr = std::string( msg.substr( 0, 500 ) );
+
+  FOR_NAME( stdb_abqerr, STDB_ABQERR )( &lop, msgStr.c_str(), &dummyInt, &dummyReal, "", msgStr.length(), 0 );
 }
 
-inline void handleAbaqusException(const std::exception& e, std::string_view routineName) {
-    std::string msg = std::format("MARMOT FATAL ERROR in {}: {}", routineName, e.what());
-    printAbaqusMessage(msg, -3); // -3 = Stop immediately
-    FOR_NAME(xit,XIT)();         // Failsafe exit
+inline void handleAbaqusException( const std::exception& e, std::string_view routineName )
+{
+  std::string msg = std::format( "MARMOT FATAL ERROR in {}: {}", routineName, e.what() );
+  printAbaqusMessage( msg, -3 ); // -3 = Stop immediately
 }
 
-inline void handleAbaqusUnknownException(std::string_view routineName) {
-    std::string msg = std::format("MARMOT FATAL ERROR: Unknown exception caught in {}.", routineName);
-    printAbaqusMessage(msg, -3); // -3 = Stop immediately
-    FOR_NAME(xit,XIT)();         // Failsafe exit
+inline void handleAbaqusUnknownException( std::string_view routineName )
+{
+  std::string msg = std::format( "MARMOT FATAL ERROR: Unknown exception caught in {}.", routineName );
+  printAbaqusMessage( msg, -3 ); // -3 = Stop immediately
 }
 
 // Modernized TableMap using composition
@@ -176,28 +178,29 @@ struct MarmotInfo {
 class TableMap {
 public:
   [[nodiscard]] bool isLoaded() const noexcept { return loaded; }
-  void setLoaded(bool val) noexcept { loaded = val; }
+  void               setLoaded( bool val ) noexcept { loaded = val; }
 
-  MarmotInfo& operator[](int key) { return data[key]; }
-  const MarmotInfo& at(int key) const { return data.at(key); }
-  void clear() { data.clear(); }
+  MarmotInfo&       operator[]( int key ) { return data[key]; }
+  const MarmotInfo& at( int key ) const { return data.at( key ); }
+  void              clear() { data.clear(); }
 
 private:
-  bool loaded = false;
-  std::unordered_map<int, MarmotInfo> data;
+  bool                                  loaded = false;
+  std::unordered_map< int, MarmotInfo > data;
 };
 
 // RAII Wrapper for Abaqus Mutex to guarantee exception safety
 class AbaqusScopedLock {
 public:
-    explicit AbaqusScopedLock(int mutexId) : id(mutexId) { MutexLock(id); }
-    ~AbaqusScopedLock() { MutexUnlock(id); }
-    
-    // Prevent copying
-    AbaqusScopedLock(const AbaqusScopedLock&) = delete;
-    AbaqusScopedLock& operator=(const AbaqusScopedLock&) = delete;
+  explicit AbaqusScopedLock( int mutexId ) : id( mutexId ) { MutexLock( id ); }
+  ~AbaqusScopedLock() { MutexUnlock( id ); }
+
+  // Prevent copying
+  AbaqusScopedLock( const AbaqusScopedLock& )            = delete;
+  AbaqusScopedLock& operator=( const AbaqusScopedLock& ) = delete;
+
 private:
-    int id;
+  int id;
 };
 
 inline void readAllMarmotInfoInto( TableMap& map, std::string_view tableCollectionName, std::string_view tableLabel )
@@ -209,29 +212,32 @@ inline void readAllMarmotInfoInto( TableMap& map, std::string_view tableCollecti
   int jError = 0;
   settablecollection_( tcName, &jError, AbqStringLen );
   if ( jError != 0 ) {
-    printAbaqusMessage(std::format("MARMOT WARNING: Cannot activate table collection {}", tableCollectionName), -1);
+    printAbaqusMessage( std::format( "MARMOT WARNING: Cannot activate table collection {}", tableCollectionName ), -1 );
     return;
   }
 
   int numParams = 0, numRows = 0;
   queryparametertable_( tblName, &numParams, &numRows, &jError, AbqStringLen );
   if ( jError != 0 || numRows == 0 ) {
-    printAbaqusMessage(std::format("MARMOT WARNING: Cannot query parameter table {}", tableLabel), -1);
+    printAbaqusMessage( std::format( "MARMOT WARNING: Cannot query parameter table {}", tableLabel ), -1 );
     return;
   }
 
   const int maxParams   = numParams;
   const int cParams_len = AbqStringLen * maxParams;
 
-  std::vector<int>    iParamsDataType(maxParams);
-  std::vector<int>    iParams(maxParams);
-  std::vector<double> rParams(maxParams);
-  std::string         cParams(cParams_len, ' '); 
+  std::vector< int >    iParamsDataType( maxParams );
+  std::vector< int >    iParams( maxParams );
+  std::vector< double > rParams( maxParams );
+  std::string           cParams( cParams_len, ' ' );
 
   map.clear();
-  
-  printAbaqusMessage(std::format("MARMOT INFO: Reading parameter table {} with {} rows and {} parameters per row.", 
-                                 tableLabel, numRows, numParams), 1);
+
+  printAbaqusMessage( std::format( "MARMOT INFO: Reading parameter table {} with {} rows and {} parameters per row.",
+                                   tableLabel,
+                                   numRows,
+                                   numParams ),
+                      1 );
 
   for ( int row = 1; row <= numRows; row++ ) {
     getparametertablerow_( tblName,
@@ -246,21 +252,25 @@ inline void readAllMarmotInfoInto( TableMap& map, std::string_view tableCollecti
                            cParams_len );
 
     if ( jError != 0 ) {
-      printAbaqusMessage(std::format("MARMOT WARNING: getParameterTableRow failed at row {}", row), -1);
+      printAbaqusMessage( std::format( "MARMOT WARNING: getParameterTableRow failed at row {}", row ), -1 );
       continue;
     }
 
     int key         = iParams[0];
     int nProperties = iParams[2];
 
-    std::string_view strView(cParams.data() + AbqStringLen, AbqStringLen);
-    auto lastChar = strView.find_last_not_of(' ');
-    std::string str = (lastChar == std::string_view::npos) ? "" : std::string(strView.substr(0, lastChar + 1));
+    std::string_view strView( cParams.data() + AbqStringLen, AbqStringLen );
+    auto             lastChar = strView.find_last_not_of( ' ' );
+    std::string str = ( lastChar == std::string_view::npos ) ? "" : std::string( strView.substr( 0, lastChar + 1 ) );
 
     map[key] = MarmotInfo{ str, nProperties };
-    
-    printAbaqusMessage(std::format("MARMOT INFO: Loaded row {}: {} -> {}, number of properties = {}", 
-                                   row, key, str, nProperties), 1);
+
+    printAbaqusMessage( std::format( "MARMOT INFO: Loaded row {}: {} -> {}, number of properties = {}",
+                                     row,
+                                     key,
+                                     str,
+                                     nProperties ),
+                        1 );
   }
 }
 
@@ -269,12 +279,14 @@ inline void loadIntToStringParameterTableOnceAndThreadSafe( std::string_view col
                                                             TableMap&        map,
                                                             int              mutexId )
 {
-  if ( map.isLoaded() ) return;
+  if ( map.isLoaded() )
+    return;
 
-  AbaqusScopedLock lock(mutexId);
+  AbaqusScopedLock lock( mutexId );
 
-  if ( map.isLoaded() ) return;
-  
+  if ( map.isLoaded() )
+    return;
+
   readAllMarmotInfoInto( map, collection, label );
   map.setLoaded( true );
 }
