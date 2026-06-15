@@ -30,343 +30,260 @@
 #define FOR_NAME(a, b) a##_
 #endif
 // clang-format on
-#include "Marmot/MarmotExplicitLibrary.h"
-#include "Marmot/MarmotJournal.h"
-#include "Marmot/MarmotMaterialHypoElasticExplicit.h"
+#define ABAQUS_EXPLICIT
+#include "AbaqusMarmotHelper.h"
+#include "Marmot/MarmotElementFactory.h"
+#include "Marmot/MarmotElementProperty.h"
 #include <Eigen/Core>
 #include <memory>
 #include <string>
 
-// clang-format off
-extern "C" void FOR_NAME(vumat, VUMAT)(
-// clang-format on
-  const int&    nBlocks,
-  const int&    nDirect,
-  const int&    nShear,
-  const int&    nStateVars,
-  const int&    nfieldv,
-  const int&    nMaterialProperties,
-  const int&    lanneal,
-  const double& stepTime,
-  const double& totalTime,
-  double*       dTArray,
-  const char*   matName,
-  const double* coordMp,
-  const double* charLength,
-  const double* materialProperties,
-  const double* density,
-  const double* dStrain,
-  const double* relSpinInc,
-  const double* tempOld,
-  const double* stretchOld,
-  const double* defgradOld,
-  const double* fieldOld,
-  const double* stressOld,
-  const double* stateVarsOld,
-  const double* enerInternOld,
-  const double* enerInelasOld,
-  const double* tempNew,
-  const double* stretchNew,
-  const double* defgradNew,
-  const double* fieldNew,
-  double*       stressNew,
-  double*       stateVarsNew,
-  double*       enerInternNew,
-  double*       enerInelasNew,
-  const int     matNameLength // length of Material Name := 80, passed in when FORTRAN calls c/c++:
-                              // Microsoft C compiler AND GCC (it *may* differ for IntelC++)
-)
+// Instantiate the global tables for Abaqus/Standard exactly once in this translation unit
+TableMap ElementTableMap;
+TableMap MaterialTableMap;
 
+extern "C" void FOR_NAME( vexternaldb,
+                          VEXTERNALDB )( int* lOp, int* i_Array, int* niArray, double* r_Array, int* nrArray )
 {
+  // --- 0-Based Indexing Conversions (Fortran is 1-based) ---
+  // Contents of i_Array
+  const int i_int_nTotalNodes      = 0;
+  const int i_int_nTotalElements   = 1;
+  const int i_int_kStep            = 2;
+  const int i_int_kInc             = 3;
+  const int i_int_iStatus          = 4;
+  const int i_int_lWriteRestart    = 5;
+  const int i_int_ExtraOutputFrame = 6;
 
-  using namespace Eigen;
+  // Possible values for the lOp argument
+  const int j_int_StartAnalysis  = 0;
+  const int j_int_StartStep      = 1;
+  const int j_int_SetupIncrement = 2;
+  const int j_int_StartIncrement = 3;
+  const int j_int_EndIncrement   = 4;
+  const int j_int_EndStep        = 5;
+  const int j_int_EndAnalysis    = 6;
 
-  const std::string materialName( matName );
-  const std::string strippedName = materialName.substr( 0, materialName.find_first_of( ' ' ) )
-                                     .substr( 0, materialName.find_first_of( '-' ) );
+  // Possible values for i_Array[i_int_iStatus]
+  const int j_int_Continue          = 0;
+  const int j_int_TerminateStep     = 1;
+  const int j_int_TerminateAnalysis = 2;
 
-  int materialCode = MarmotLibrary::MarmotMaterialExplicitFactory::getMaterialCodeFromName( strippedName );
+  // Contents of r_Array
+  const int i_flt_TotalTime = 0;
+  const int i_flt_StepTime  = 1;
+  const int i_flt_dTime     = 2;
 
-  auto material = std::unique_ptr< MarmotMaterialHypoElasticExplicit >(
-    dynamic_cast< MarmotMaterialHypoElasticExplicit* >(
-      MarmotLibrary::MarmotMaterialExplicitFactory::createMaterial( materialCode,
-                                                                    materialProperties,
-                                                                    nMaterialProperties,
-                                                                    0 ) ) );
+  // --- Accessing variables (Dereferencing Pointers) ---
+  int operation = *lOp;
+  int kStep     = i_Array[i_int_kStep];
+  int kInc      = i_Array[i_int_kInc];
 
-  // alternative way to create the material (doesn't add a lot of performance)
-  /* auto material = Marmot::Materials::CDPExplicit( materialProperties, nMaterialProperties, 0 ); */
+  if ( operation == j_int_StartAnalysis ) {
 
-  const int nTensor = nDirect + nShear;
-
-  // Map to stress old and new, and initialize new with old
-  Map< const MatrixXd > stressOldBlock( stressOld, nBlocks, nTensor );
-  Map< MatrixXd >       stressNewBlock( stressNew, nBlocks, nTensor );
-  stressNewBlock = stressOldBlock;
-
-  // Map to dStrain, and multiply shear terms by a factor of two
-  MatrixXd dStrainBlock = Map< const MatrixXd >( dStrain, nBlocks, nTensor );
-
-  // we need to multiply all shear terms by a factor of two in Abaqus explicit:
-  dStrainBlock.block( 0, nDirect, nBlocks, nShear ) *= 2.0;
-
-  // Map to stateVars old and new, and initialize new with old
-  Map< const MatrixXd > stateVarsOldBlock( stateVarsOld, nBlocks, nStateVars );
-  Map< MatrixXd >       stateVarsNewBlock( stateVarsNew, nBlocks, nStateVars );
-  stateVarsNewBlock = stateVarsOldBlock;
-
-  const double    dTime = dTArray[0];
-  Map< VectorXd > shearModuliForDT( dTArray + 1, nBlocks );
-  Map< VectorXd > bulkModuliForDT( dTArray + 1 + nBlocks, nBlocks );
-
-  Map< const VectorXd > materialProperties_( materialProperties, nMaterialProperties );
-
-  Map< VectorXd >       internalEnergyDensityBlock( enerInternNew, nBlocks );
-  Map< VectorXd >       dissipatedEnergyDensityBlock( enerInelasNew, nBlocks );
-  Map< const VectorXd > densityBlock( density, nBlocks );
-  Map< const VectorXd > charLengthBlock( charLength, nBlocks );
-
-  if ( nShear == 3 ) {
-    // Furthermore, we need to swap the last two shear components in Abaqus explicit (only in 3d):
-    // dStrain
-    VectorXd temp         = dStrainBlock.col( 4 );
-    dStrainBlock.col( 4 ) = dStrainBlock.col( 5 );
-    dStrainBlock.col( 5 ) = temp;
-
-    // stress
-    temp                    = stressNewBlock.col( 4 );
-    stressNewBlock.col( 4 ) = stressNewBlock.col( 5 );
-    stressNewBlock.col( 5 ) = temp;
-
-    // same for stress:
-
-    MatrixXd stateVarsNewBlock_RowMajor = stateVarsNewBlock.transpose();
-    MatrixXd dStrainBlock3d_RowMajor    = dStrainBlock.transpose();
-    MatrixXd stressBlock3D_RowMajor     = stressNewBlock.transpose();
-
-    for ( int b = 0; b < nBlocks; b++ ) {
-
-      /* material->assignStateVars( stateVarsNewBlock_RowMajor.col(b).data(), nStateVars ); */
-
-      material->computeStress( stressBlock3D_RowMajor.col( b ).data(),
-                               stateVarsNewBlock_RowMajor.col( b ).data(),
-                               nStateVars,
-                               internalEnergyDensityBlock.data() + b,
-                               dissipatedEnergyDensityBlock.data() + b,
-                               dStrainBlock3d_RowMajor.col( b ).data(),
-                               densityBlock( b ),
-                               totalTime,
-                               dTime,
-                               shearModuliForDT( b ),
-                               bulkModuliForDT( b ),
-                               charLengthBlock( b ) );
-    }
-
-    stateVarsNewBlock = stateVarsNewBlock_RowMajor.transpose();
-    stressNewBlock    = stressBlock3D_RowMajor.transpose();
-
-    // we need to swap back the last two shear components in Abaqus explicit (only in 3d):
-    temp                    = stressNewBlock.col( 4 );
-    stressNewBlock.col( 4 ) = stressNewBlock.col( 5 );
-    stressNewBlock.col( 5 ) = temp;
-  }
-
-  else if ( nShear == 1 ) {
-
-    // plane strain case
-
-    // make a full 3d dStrainBlock:
-    MatrixXd dStrainBlock3d( nBlocks, 6 );
-    dStrainBlock3d.setZero();
-
-    dStrainBlock3d.block( 0, 0, nBlocks, 4 ) = dStrainBlock;
-
-    // same for stress:
-    MatrixXd stressBlock3D( nBlocks, 6 );
-    stressBlock3D.setZero();
-    stressBlock3D.block( 0, 0, nBlocks, 4 ) = stressNewBlock;
-
-    MatrixXd stateVarsNewBlock_RowMajor = stateVarsNewBlock.transpose();
-    MatrixXd dStrainBlock3d_RowMajor    = dStrainBlock3d.transpose();
-    MatrixXd stressBlock3D_RowMajor     = stressBlock3D.transpose();
-
-    for ( int b = 0; b < nBlocks; b++ ) {
-
-      /* material->assignStateVars( stateVarsNewBlock_RowMajor.col(b).data(), nStateVars ); */
-
-      material->computeStress( stressBlock3D_RowMajor.col( b ).data(),
-                               stateVarsNewBlock_RowMajor.col( b ).data(),
-                               nStateVars,
-                               internalEnergyDensityBlock.data() + b,
-                               dissipatedEnergyDensityBlock.data() + b,
-                               dStrainBlock3d_RowMajor.col( b ).data(),
-                               densityBlock( b ),
-                               totalTime,
-                               dTime,
-                               shearModuliForDT( b ),
-                               bulkModuliForDT( b ),
-                               charLengthBlock( b ) );
-    }
-
-    stateVarsNewBlock = stateVarsNewBlock_RowMajor.transpose();
-
-    // condense 3D stress to plane strain stress:
-    stressNewBlock = stressBlock3D_RowMajor.transpose().block( 0, 0, nBlocks, 4 );
+    ElementTableMap.setLoaded( false );
+    MaterialTableMap.setLoaded( false );
   }
 }
+
 // clang-format off
 extern "C" void FOR_NAME(vuel, VUEL)
-// clang-format on
-                                      ( const int&    nBlock,
-                                        double*       rhs,
-                                        double*       amass,
-                                        double*       dTStable,
-                                        double*       stateVars,
-                                        const int&    nStateVars,
-                                        double*       energies,
-                                        const int&    nNodes,
-                                        const int&    nDofElement,
-                                        const double* properties,
-                                        const int&    nProperties,
-                                        const int*    integerProperties,
-                                        const int&    nIntegerProperties,
-                                        const double* coordinates,
-                                        const int&    mcrd,
-                                        const double* U,
-                                        const double* dU,
-                                        const double* UDot,
-                                        const double* UDotDot,
-                                        const int&    jtype,
-                                        const int*    jElem,
-                                        const double* time,
-                                        const double* period,
-                                        const double& dTime,
-                                        const double& dTimePrev,
-                                        const int&    kstep,
-                                        const int&    kinc,
-                                        const int*    lflags,
-                                        const double* massScaleFactor, // this parameter seems to be always zero; needs to be
-                                                                       // checked
-                                        const double* predef,
-                                        const int&    npredef,
-                                        const int&    jdltyp,
-                                        const double* adlmag )
+  // clang-format on
+  ( const int&    nBlock,
+    double*       rhs,
+    double*       amass,
+    double*       dTStable,
+    double*       stateVars,
+    const int&    nStateVars,
+    double*       energies,
+    const int&    nNodes,
+    const int&    nDofElement,
+    const double* properties,
+    const int&    nProperties,
+    const int*    integerProperties,
+    const int&    nIntegerProperties,
+    const double* coordinates,
+    const int&    mcrd,
+    const double* U,
+    const double* dU,
+    const double* UDot,
+    const double* UDotDot,
+    const int&    jtype,
+    const int*    jElem,
+    const double* time,
+    const double* period,
+    const double& dTime,
+    const double& dTimePrev,
+    const int&    kstep,
+    const int&    kinc,
+    const int*    lflags,
+    const double* massScaleFactor, // this parameter seems to be always zero; needs to be
+                                   // checked
+    const double* predef,
+    const int&    npredef,
+    const int&    jdltyp,
+    const double* adlmag )
 {
-  if ( nIntegerProperties != 5 )
-    throw std::invalid_argument( MakeString()
-                                 << "Marmot: insufficient integer properties (" << nIntegerProperties
-                                 << ") provided, but 5 are required: elementCode, materialCode, nPropertiesMaterial, nPropertiesElement, additionalDefinitions, nStateVarsMaterial " );
 
-  const int elementCode           = integerProperties[0];
-  const int materialCode          = integerProperties[1];
-  const int nPropertiesMaterial   = integerProperties[2];
-  const int nPropertiesElement    = integerProperties[3];
-  const int additionalDefinitions = integerProperties[4];
+  try {
+    loadIntToStringParameterTableOnceAndThreadSafe( "VUEL_CODES", "VUEL_ELEMENTS", ElementTableMap );
+    loadIntToStringParameterTableOnceAndThreadSafe( "VUEL_CODES", "VUEL_MATERIALS", MaterialTableMap );
 
-  const double* materialProperties = properties;
-  const double* elementProperties  = properties + nPropertiesMaterial;
+    const auto& elCodeToElName   = ElementTableMap;
+    const auto& matCodeToMatName = MaterialTableMap;
 
-  const int nElEnergies = 12;
-
-  using namespace Eigen;
-
-  Map< MatrixXd > stateVarsBlock( stateVars, nBlock, nStateVars );
-  Map< MatrixXd > rhsBlock( rhs, nBlock, nDofElement );
-  Map< MatrixXd > amassBlock( amass, nBlock, nDofElement * nDofElement );
-  Map< MatrixXd > energiesBlock( energies, nBlock, nElEnergies );
-
-  Map< const MatrixXd > UBlock( U, nBlock, nDofElement );
-  Map< const MatrixXd > dUBlock( dU, nBlock, nDofElement );
-  Map< const MatrixXd > UDotBlock( UDot, nBlock, nDofElement );
-  Map< const MatrixXd > UDotDotBlock( UDotDot, nBlock, nDofElement );
-  Map< const MatrixXd > coordinatesBlock( coordinates, nBlock, mcrd * nNodes );
-
-  MatrixXd stateVarsBlock_RowMajor = stateVarsBlock.transpose();
-
-  auto theMaterial = ( MarmotLibrary::MarmotMaterialExplicitFactory::createMaterial( materialCode,
-                                                                                     materialProperties,
-                                                                                     nPropertiesMaterial,
-                                                                                     0 ) );
-
-  auto theElement = std::unique_ptr< MarmotElementExplicit >(
-    MarmotLibrary::MarmotElementExplicitFactory::createElement( elementCode, 0 ) );
-
-  theElement->assignProperties( elementProperties, nPropertiesElement );
-
-  theElement->assignMaterial( theMaterial );
-
-  const auto& procedureType = lflags[0]; // 17 = explicit dynamic, 74 = explicit fully coupled thermo-mechanical
-  const auto& nlgeom        = lflags[1]; // 0 = linear, 1 = nonlinear
-  const auto& opCode        = lflags[2]; // 1 = mass matrix
-                                         // 2 = internal forces and critical time step
-                                         // 3 = external forces
-  const double currentTime = time[1];    // 0 = step time, 1 = total time
-
-  const MatrixXd coordinatesBlock_RowMajor = coordinatesBlock.transpose();
-  amassBlock.setZero();
-
-  MatrixXd elCoordinates_RowMajor( mcrd, nNodes );
-
-  if ( opCode == 1 ) {
-    MatrixXd amassBlock_RowMajor = amassBlock.transpose();
-
-    for ( int b = 0; b < nBlock; b++ ) {
-
-      // Unlike Abaqus/Standard, Abaqus/Explicit stores the node coordinates in colmajor (nNode,mcrd) (instead of
-      // colmajor (mcrd,nNode)) so we have to swap again here
-      elCoordinates_RowMajor = Map< const MatrixXd >( coordinatesBlock_RowMajor.col( b ).data(), nNodes, mcrd )
-                                 .transpose();
-
-      theElement->assignNodeCoordinates( elCoordinates_RowMajor.data() );
-      theElement->initializeYourself();
-      theElement->computeConsistentMassMatrix( amassBlock_RowMajor.col( b ).data() );
-      theElement->lumpMassMatrix( amassBlock_RowMajor.col( b ).data() );
+    if ( nIntegerProperties < 3 ) {
+      throw std::invalid_argument(
+        std::format( "Marmot: insufficient integer properties ({}) provided, at least 3 are required",
+                     nIntegerProperties ) );
     }
 
-    amassBlock = amassBlock_RowMajor.transpose();
-  }
+    const int&     elCode                = integerProperties[0];
+    const int&     matCode               = integerProperties[1];
+    const uint32_t additionalDefinitions = static_cast< uint32_t >( integerProperties[2] );
 
-  else if ( opCode == 2 ) {
+    const int nPropertiesMaterial = matCodeToMatName.at( matCode ).nProperties;
+    const int nPropertiesElement  = nProperties - nPropertiesMaterial;
 
-    const MatrixXd UBlock_RowMajor       = UBlock.transpose();
-    const MatrixXd dUBlock_RowMajor      = dUBlock.transpose();
-    const MatrixXd UDotBlock_RowMajor    = UDotBlock.transpose();
-    const MatrixXd UDotDotBlock_RowMajor = UDotDotBlock.transpose();
+    const double* propertiesMaterial = &properties[0];
+    const double* propertiesElement  = &properties[nPropertiesMaterial];
 
-    MatrixXd rhsBlock_RowMajor       = rhsBlock.transpose();
-    MatrixXd energiesBlock_RowMajor  = energiesBlock.transpose();
+    auto theElement = std::unique_ptr< MarmotElement >(
+      MarmotLibrary::MarmotElementFactory::createElement( elCodeToElName.at( elCode ).name, jElem[0] ) );
+
+    theElement->assignProperty( ElementProperties( propertiesElement, nPropertiesElement ) );
+    theElement->assignProperty(
+      MarmotMaterialSection( matCodeToMatName.at( matCode ).name, propertiesMaterial, nPropertiesMaterial ) );
+
+    const int nNecessaryStateVars = theElement->getNumberOfRequiredStateVars();
+
+    if ( nNecessaryStateVars > nStateVars ) {
+      throw std::invalid_argument(
+        std::format( "MarmotElement {} and material {}: insufficient stateVars ({}) provided, but {} are required",
+                     elCodeToElName.at( elCode ).name,
+                     matCodeToMatName.at( matCode ).name,
+                     nStateVars,
+                     nNecessaryStateVars ) );
+    }
+
+    const int nElEnergies = 12;
+
+    using namespace Eigen;
+
+    Map< MatrixXd > stateVarsBlock( stateVars, nBlock, nStateVars );
+    Map< MatrixXd > rhsBlock( rhs, nBlock, nDofElement );
+    Map< MatrixXd > amassBlock( amass, nBlock, nDofElement * nDofElement );
+    Map< MatrixXd > energiesBlock( energies, nBlock, nElEnergies );
+
+    Map< const MatrixXd > UBlock( U, nBlock, nDofElement );
+    Map< const MatrixXd > dUBlock( dU, nBlock, nDofElement );
+    Map< const MatrixXd > UDotBlock( UDot, nBlock, nDofElement );
+    Map< const MatrixXd > UDotDotBlock( UDotDot, nBlock, nDofElement );
+    Map< const MatrixXd > coordinatesBlock( coordinates, nBlock, mcrd * nNodes );
+
     MatrixXd stateVarsBlock_RowMajor = stateVarsBlock.transpose();
 
-    for ( int b = 0; b < nBlock; b++ ) {
+    const auto& procedureType = lflags[0];
+    const auto& nlgeom        = lflags[1];
+    const auto& opCode        = lflags[2];
 
-      elCoordinates_RowMajor = Map< const MatrixXd >( coordinatesBlock_RowMajor.col( b ).data(), nNodes, mcrd )
-                                 .transpose();
-      theElement->assignNodeCoordinates( elCoordinates_RowMajor.data() );
-      theElement->initializeYourself();
+    const MatrixXd coordinatesBlock_RowMajor = coordinatesBlock.transpose();
+    amassBlock.setZero();
 
-      theElement->computeKernels(
-        // input fields
-        UBlock_RowMajor.col( b ).data(),
-        dUBlock_RowMajor.col( b ).data(),
-        UDotBlock_RowMajor.col( b ).data(),
-        UDotDotBlock_RowMajor.col( b ).data(),
+    MatrixXd elCoordinates_RowMajor( mcrd, nNodes );
 
-        // output
-        rhsBlock_RowMajor.col( b ).data(),
-        energiesBlock_RowMajor.col( b ).data(),
-        stateVarsBlock_RowMajor.col( b ).data(),
+    if ( opCode == 1 ) {
+      MatrixXd amassBlock_RowMajor = amassBlock.transpose();
 
-        nStateVars,
+      for ( int b = 0; b < nBlock; b++ ) {
 
-        currentTime,
-        dTime,
-        dTStable[b] );
+        elCoordinates_RowMajor = Map< const MatrixXd >( coordinatesBlock_RowMajor.col( b ).data(), nNodes, mcrd )
+                                   .transpose();
+
+        theElement->assignNodeCoordinates( elCoordinates_RowMajor.data() );
+        theElement->assignStateVars( stateVarsBlock_RowMajor.col( b ).data(), nStateVars );
+        theElement->initializeYourself();
+
+        // Adapted to use the new inertia methods. Explicit dynamics typically requires the lumped mass.
+        theElement->computeConsistentInertia( amassBlock_RowMajor.col( b ).data() );
+
+        // lump the matrix:
+        MatrixXd massMatrix = Map< MatrixXd >( amassBlock_RowMajor.col( b ).data(), nDofElement, nDofElement );
+        VectorXd lumpedMass = massMatrix.rowwise().sum();
+        massMatrix.setZero();
+        massMatrix.diagonal() = lumpedMass;
+
+        amassBlock_RowMajor.col( b ) = Map< VectorXd >( massMatrix.data(), nDofElement * nDofElement );
+      }
+
+      amassBlock = amassBlock_RowMajor.transpose();
     }
 
-    rhsBlock       = rhsBlock_RowMajor.transpose();
-    energiesBlock  = energiesBlock_RowMajor.transpose();
-    stateVarsBlock = stateVarsBlock_RowMajor.transpose();
-  }
+    else if ( opCode == 2 ) {
 
-  delete theMaterial;
+      const MatrixXd UBlock_RowMajor       = UBlock.transpose();
+      const MatrixXd dUBlock_RowMajor      = dUBlock.transpose();
+      const MatrixXd UDotBlock_RowMajor    = UDotBlock.transpose();
+      const MatrixXd UDotDotBlock_RowMajor = UDotDotBlock.transpose();
+
+      MatrixXd rhsBlock_RowMajor       = rhsBlock.transpose();
+      MatrixXd energiesBlock_RowMajor  = energiesBlock.transpose();
+      MatrixXd stateVarsBlock_RowMajor = stateVarsBlock.transpose();
+
+      for ( int b = 0; b < nBlock; b++ ) {
+
+        elCoordinates_RowMajor = Map< const MatrixXd >( coordinatesBlock_RowMajor.col( b ).data(), nNodes, mcrd )
+                                   .transpose();
+        theElement->assignNodeCoordinates( elCoordinates_RowMajor.data() );
+
+        // State variables must be assigned explicitly now before computation
+        theElement->assignStateVars( stateVarsBlock_RowMajor.col( b ).data(), nStateVars );
+        theElement->initializeYourself();
+
+        // dTStable requires an isolated variable since the signature uses double&
+        double stableTimeStep = dTStable[b];
+
+        // Replaces computeKernels. UDot and UDotDot are omitted as they are not present in the new explicit interface.
+        theElement->computeYourselfExplicit( UBlock_RowMajor.col( b ).data(),
+                                             dUBlock_RowMajor.col( b ).data(),
+                                             rhsBlock_RowMajor.col( b ).data(),
+                                             time,
+                                             dTime,
+                                             stableTimeStep );
+
+        dTStable[b] = stableTimeStep;
+
+        // Extract internal energy. Abaqus expects ALLIE (internal energy) at index 0 of the energies array.
+        double internalEnergy = 0.0;
+        theElement->computeInternalEnergy( internalEnergy );
+
+        /* C     energy array indices */
+        /*       parameter ( iElPd = 1, */
+        /*      *            iElCd = 2, */
+        /*      *            iElIe = 3, */
+        /*      *            iElTs = 4, */
+        /*      *            iElDd = 5, */
+        /*      *            iElBv = 6, */
+        /*      *            iElDe = 7, */
+        /*      *            iElHe = 8, */
+        /*      *            iUnused = 9, */
+        /*      *            iElTh = 10, */
+        /*      *            iElDmd = 11, */
+        /*      *            iElDc = 12, */
+        /*      *            nElEnergy = 12) */
+
+        energiesBlock_RowMajor.col( b )( 2 ) = internalEnergy;
+      }
+
+      rhsBlock       = -rhsBlock_RowMajor.transpose();
+      energiesBlock  = energiesBlock_RowMajor.transpose();
+      stateVarsBlock = stateVarsBlock_RowMajor.transpose();
+    }
+  }
+  catch ( const std::exception& e ) {
+    handleAbaqusException( e, "VUEL" );
+  }
+  catch ( ... ) {
+    handleAbaqusUnknownException( "VUEL" );
+  }
 }

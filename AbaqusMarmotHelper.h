@@ -31,12 +31,17 @@
 #include <cstdint>
 #include <cstring>
 #include <format>
+#include <iostream>
+#include <mutex>
 #include <ranges>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 #include <vector>
+
+// Declare a standard C++ mutex globally or statically within your translation unit
+static std::mutex TheMutex;
 
 // Global constant for Fortran string buffers
 constexpr size_t AbqStringLen = 80;
@@ -106,6 +111,18 @@ void FOR_NAME(stdb_abqerr,STDB_ABQERR)
     const char*   appendix,
     const int     lengthString,
     const int     lengthAppendix );
+
+// clang-format off
+void FOR_NAME(xplb_abqerr,XPLB_ABQERR)
+  // clang-format on
+  ( const int*    lop,
+    const char*   stringZT,
+    const int*    intArray,
+    const double* realArray,
+    const char*   appendix,
+    const int     lengthString,
+    const int     lengthAppendix );
+
 // clang-format off
 void FOR_NAME(xit,XIT)();
 // clang-format on
@@ -154,7 +171,11 @@ inline void printAbaqusMessage( std::string_view msg, int lop )
   // Truncate to Abaqus's 500 character limit to prevent buffer overflows
   std::string msgStr = std::string( msg.substr( 0, 500 ) );
 
+#ifdef ABAQUS_EXPLICIT
+  FOR_NAME( xplb_abqerr, XPLB_ABQERR )( &lop, msgStr.c_str(), &dummyInt, &dummyReal, "", msgStr.length(), 0 );
+#else
   FOR_NAME( stdb_abqerr, STDB_ABQERR )( &lop, msgStr.c_str(), &dummyInt, &dummyReal, "", msgStr.length(), 0 );
+#endif
 }
 
 inline void handleAbaqusException( const std::exception& e, std::string_view routineName )
@@ -187,20 +208,6 @@ public:
 private:
   bool                                  loaded = false;
   std::unordered_map< int, MarmotInfo > data;
-};
-
-// RAII Wrapper for Abaqus Mutex to guarantee exception safety
-class AbaqusScopedLock {
-public:
-  explicit AbaqusScopedLock( int mutexId ) : id( mutexId ) { MutexLock( id ); }
-  ~AbaqusScopedLock() { MutexUnlock( id ); }
-
-  // Prevent copying
-  AbaqusScopedLock( const AbaqusScopedLock& )            = delete;
-  AbaqusScopedLock& operator=( const AbaqusScopedLock& ) = delete;
-
-private:
-  int id;
 };
 
 inline void readAllMarmotInfoInto( TableMap& map, std::string_view tableCollectionName, std::string_view tableLabel )
@@ -276,13 +283,12 @@ inline void readAllMarmotInfoInto( TableMap& map, std::string_view tableCollecti
 
 inline void loadIntToStringParameterTableOnceAndThreadSafe( std::string_view collection,
                                                             std::string_view label,
-                                                            TableMap&        map,
-                                                            int              mutexId )
+                                                            TableMap&        map )
 {
   if ( map.isLoaded() )
     return;
 
-  AbaqusScopedLock lock( mutexId );
+  std::lock_guard< std::mutex > lock( TheMutex );
 
   if ( map.isLoaded() )
     return;

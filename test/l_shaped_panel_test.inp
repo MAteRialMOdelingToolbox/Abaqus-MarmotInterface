@@ -2,8 +2,8 @@
 ** the number of properties and the number of variables. 
 ** It does not say anything about the actual properties which are defined in the UEL property section.
 ** The name U020 is abitrary, it can be any U + four digit number.
-** variables  8 [qps] * ( 1 [GCDP sdv] + 6 [stress] + 6 [strain] ) = 104 in total
-*USER ELEMENT, UNSYMM, TYPE=U020, NODES=20, COORDINATES=3, PROPERTIES=8, VARIABLES=104, I PROPERTIES=3
+** variables  8 [qps] * ( 1 [GCDP sdv] + 6 [stress] + 6 [strain] + 3 [energies ]) = 128 in total
+*USER ELEMENT, UNSYMM, TYPE=U020, NODES=20, COORDINATES=3, PROPERTIES=8, VARIABLES=128, I PROPERTIES=3
 1,2,3
 2,1,2,3
 3,1,2,3

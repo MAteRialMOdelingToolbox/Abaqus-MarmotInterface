@@ -37,8 +37,6 @@ TableMap MaterialTableMap;
 extern "C" void FOR_NAME( uexternaldb,
                           UEXTERNALDB )( int* LOP, int* LRESTART, double* TIME, double* DTIME, int* KSTEP, int* KINC )
 {
-  MutexInit( MutexID_UEL );
-
   if ( *LOP == 0 || *LOP == 4 ) {
     ElementTableMap.setLoaded( false );
     MaterialTableMap.setLoaded( false );
@@ -86,8 +84,8 @@ extern "C" void FOR_NAME(uel,UEL)(
 // clang-format on
 {
   try {
-    loadIntToStringParameterTableOnceAndThreadSafe( "UEL_CODES", "UEL_ELEMENTS", ElementTableMap, MutexID_UEL );
-    loadIntToStringParameterTableOnceAndThreadSafe( "UEL_CODES", "UEL_MATERIALS", MaterialTableMap, MutexID_UEL );
+    loadIntToStringParameterTableOnceAndThreadSafe( "UEL_CODES", "UEL_ELEMENTS", ElementTableMap );
+    loadIntToStringParameterTableOnceAndThreadSafe( "UEL_CODES", "UEL_MATERIALS", MaterialTableMap );
 
     const auto& elCodeToElName   = ElementTableMap;
     const auto& matCodeToMatName = MaterialTableMap;
@@ -242,8 +240,8 @@ extern "C" void FOR_NAME(umat,UMAT)(
           abq2voigt[nDirect + i] = 3 + i;
 
         MarmotMaterialHypoElastic::state3D state;
-        state.stateVars           = stateVars;
-        state.strainEnergyDensity = sSE;
+        state.stateVars            = stateVars;
+        state.elasticEnergyDensity = sSE;
         state.stress.setZero();
 
         for ( int i = 0; i < nTensor; i++ ) {
@@ -253,7 +251,7 @@ extern "C" void FOR_NAME(umat,UMAT)(
 
         material->computeStress( state, dStress_dStrain66, dStrain6, ti );
 
-        sSE = state.strainEnergyDensity;
+        sSE = state.elasticEnergyDensity;
 
         for ( int i = 0; i < nTensor; i++ ) {
           abqStress( i ) = state.stress( abq2voigt[i] );
@@ -269,8 +267,8 @@ extern "C" void FOR_NAME(umat,UMAT)(
         Marmot::Vector3d dStrain3          = Marmot::Vector3d::Zero();
 
         MarmotMaterialHypoElastic::state2D state;
-        state.stateVars           = stateVars;
-        state.strainEnergyDensity = sSE;
+        state.stateVars            = stateVars;
+        state.elasticEnergyDensity = sSE;
 
         for ( int i = 0; i < nTensor; i++ ) {
           state.stress( i ) = stress[i];
@@ -279,7 +277,7 @@ extern "C" void FOR_NAME(umat,UMAT)(
 
         material->computePlaneStress( state, dStress_dStrain33, dStrain3, ti );
 
-        sSE = state.strainEnergyDensity;
+        sSE = state.elasticEnergyDensity;
 
         for ( int i = 0; i < nTensor; i++ ) {
           stress[i] = state.stress( i );
@@ -290,8 +288,8 @@ extern "C" void FOR_NAME(umat,UMAT)(
       }
       else if ( nDirect == 1 ) {
         MarmotMaterialHypoElastic::state1D state;
-        state.stateVars           = stateVars;
-        state.strainEnergyDensity = sSE;
+        state.stateVars            = stateVars;
+        state.elasticEnergyDensity = sSE;
 
         state.stress = stress[0];
 
@@ -300,21 +298,22 @@ extern "C" void FOR_NAME(umat,UMAT)(
 
         material->computeUniaxialStress( state, dStress_dStrain1D, dStrain1, ti );
 
-        sSE                = state.strainEnergyDensity;
+        sSE                = state.elasticEnergyDensity;
         stress[0]          = state.stress;
         dStress_dStrain[0] = dStress_dStrain1D;
       }
-    } 
+    }
     catch ( const std::exception& e ) {
       pNewDT = 0.25;
-      
-      std::string msg = std::format("MARMOT WARNING: Material computation failed, cutting back time increment. Reason: {}", e.what());
-      printAbaqusMessage(msg, -1);
-      
+
+      std::string
+        msg = std::format( "MARMOT WARNING: Material computation failed, cutting back time increment. Reason: {}",
+                           e.what() );
+      printAbaqusMessage( msg, -1 );
+
       return;
     }
-
-  } 
+  }
   catch ( const std::exception& e ) {
     handleAbaqusException( e, "UMAT" );
   }
