@@ -146,6 +146,11 @@ extern "C" void FOR_NAME(uel,UEL)(
     }
 
     theElement->computeKernels( U, dU, rightHandSide, KMatrix, time[1], dTime );
+
+    // Resolve RHS sign difference
+    for ( int i = 0; i < nDegreesOfFreedom; i++ ) {
+      rightHandSide[i] = -rightHandSide[i];
+    }
   }
   catch ( const std::exception& e ) {
     handleAbaqusException( e, "UEL" );
