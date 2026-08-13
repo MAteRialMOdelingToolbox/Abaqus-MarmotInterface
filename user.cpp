@@ -145,7 +145,7 @@ extern "C" void FOR_NAME(uel,UEL)(
       theElement->setInitialConditions( MarmotElement::MarmotMaterialInitialization, nullptr );
     }
 
-    theElement->computeYourself( U, dU, rightHandSide, KMatrix, time, dTime, pNewDT );
+    theElement->computeKernels( U, dU, rightHandSide, KMatrix, time[1], dTime );
   }
   catch ( const std::exception& e ) {
     handleAbaqusException( e, "UEL" );
